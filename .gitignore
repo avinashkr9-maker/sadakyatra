@@ -1,0 +1,6 @@
+app/.expo/
+app/node_modules/
+backend/node_modules/
+backend/data.sqlite
+backend/data.sqlite-shm
+backend/data.sqlite-wal

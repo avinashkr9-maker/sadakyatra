@@ -1,0 +1,22 @@
+{
+  "expo": {
+    "name": "SadakYatra",
+    "slug": "sadakyatra",
+    "version": "0.1.0",
+    "sdkVersion": "52.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/loveable/icon-512.png",
+    "splash": {
+      "image": "./assets/loveable/icon-512.png",
+      "backgroundColor": "#07090D",
+      "resizeMode": "contain"
+    },
+    "androidStatusBar": {
+      "barStyle": "light-content",
+      "backgroundColor": "#07090D"
+    },
+    "android": {
+      "package": "com.sadakyatra.app"
+    }
+  }
+}

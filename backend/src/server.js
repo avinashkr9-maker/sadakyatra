@@ -1,0 +1,260 @@
+import express from 'express';
+import cors from 'cors';
+import { customAlphabet } from 'nanoid';
+import db from './db.js';
+import { execSync } from 'node:child_process';
+import fs from 'node:fs';
+import path from 'node:path';
+
+// Initialize database if it doesn't exist
+const dbPath = path.resolve(process.cwd(), 'data.sqlite');
+if (!fs.existsSync(dbPath)) {
+  console.log('Initializing database...');
+  execSync('node scripts/init-db.js', { stdio: 'inherit' });
+}
+
+const app = express();
+const port = process.env.PORT || 4000;
+const nano = customAlphabet('0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ', 8);
+
+app.use(cors());
+app.use(express.json());
+
+const validCategories = new Set(['sedan', 'suv', 'traveller']);
+const validStatuses = new Set(['PENDING', 'CONFIRMED', 'ONGOING', 'COMPLETED', 'CANCELLED']);
+const validServiceTypes = new Set(['OUTSTATION', 'AIRPORT', 'WEDDING', 'LOCAL']);
+
+const appConfig = {
+  brand: {
+    name: 'SadakYatra',
+    rating: 4.9,
+    reviewCount: 40,
+    phone: '+919304057169',
+    whatsapp: 'https://wa.me/919304057169',
+    logoUrl: 'https://plain-apac-prod-public.komododecks.com/202604/12/yU2ygE8uhy2XVXaRsUyW/image.png',
+    accent: '#FFCC00',
+    location: 'Novel Nook Library, Ramdayalu Nagar, Muzaffarpur, Bihar'
+  },
+  services: ['OUTSTATION', 'AIRPORT', 'WEDDING', 'LOCAL'],
+  categories: ['sedan', 'suv', 'traveller'],
+  routes: ['Muzaffarpur', 'Patna', 'Darbhanga', 'Sitamarhi', 'Motihari', 'Samastipur', 'Raxaul'],
+  faqs: [
+    {
+      q: 'How fast can booking be confirmed?',
+      a: 'Most requests are confirmed in minutes on WhatsApp or call.'
+    },
+    {
+      q: 'Any hidden charges?',
+      a: 'Driver allowance is included. Tolls and state taxes are disclosed before final confirmation.'
+    },
+    {
+      q: 'Do you support wedding packages?',
+      a: 'Yes. Wedding package starts around Rs 4500 and includes decoration and chauffeur.'
+    }
+  ],
+  testimonials: [
+    { name: 'Arvind Singh', rating: 5, text: 'Wedding car was decorated and arrived on time. Highly recommended.' },
+    { name: 'Pooja Verma', rating: 5, text: 'Outstation trip was smooth and driver was punctual and professional.' },
+    { name: 'Ravi Thakur', rating: 5, text: 'Transparent rates, clean car, and safe experience.' }
+  ]
+};
+
+app.get('/health', (_req, res) => {
+  res.json({ ok: true, service: 'sadakyatra-backend' });
+});
+
+app.get('/app/config', (_req, res) => {
+  res.json(appConfig);
+});
+
+app.post('/auth/mock-login', (req, res) => {
+  const { phone, fullName } = req.body;
+  if (!phone) return res.status(400).json({ error: 'phone is required' });
+
+  let user = db.prepare('SELECT * FROM users WHERE phone = ?').get(phone);
+  if (!user) {
+    const info = db.prepare('INSERT INTO users (role, full_name, phone) VALUES (?, ?, ?)')
+      .run('CUSTOMER', fullName || null, phone);
+    user = db.prepare('SELECT * FROM users WHERE id = ?').get(info.lastInsertRowid);
+  }
+
+  res.json({
+    token: `mock-token-${user.id}`,
+    user: { id: user.id, role: user.role, fullName: user.full_name, phone: user.phone }
+  });
+});
+
+app.post('/pricing/estimate', (req, res) => {
+  const { origin, destination, category } = req.body;
+  if (!origin || !destination || !category) {
+    return res.status(400).json({ error: 'origin, destination, category are required' });
+  }
+  if (!validCategories.has(category)) {
+    return res.status(400).json({ error: 'category must be sedan, suv, or traveller' });
+  }
+
+  const rule = db.prepare(
+    'SELECT * FROM fare_rules WHERE origin = ? AND destination = ? AND active = 1 LIMIT 1'
+  ).get(origin, destination);
+  if (!rule) return res.status(404).json({ error: 'No fare rule found for this route' });
+
+  const fare = category === 'sedan' ? rule.sedan_fare : category === 'suv' ? rule.suv_fare : rule.traveller_fare;
+  return res.json({ origin, destination, category, estimatedFare: fare });
+});
+
+app.post('/bookings', (req, res) => {
+  const {
+    phone,
+    fullName,
+    serviceType,
+    pickup,
+    drop,
+    tripDatetime,
+    carCategory,
+    customerNote
+  } = req.body;
+
+  if (!phone || !serviceType || !pickup || !drop || !tripDatetime || !carCategory) {
+    return res.status(400).json({ error: 'phone, serviceType, pickup, drop, tripDatetime, carCategory are required' });
+  }
+  if (!validServiceTypes.has(serviceType)) {
+    return res.status(400).json({ error: 'serviceType must be OUTSTATION, AIRPORT, WEDDING, or LOCAL' });
+  }
+  if (!validCategories.has(carCategory)) {
+    return res.status(400).json({ error: 'carCategory must be sedan, suv, or traveller' });
+  }
+
+  let user = db.prepare('SELECT * FROM users WHERE phone = ?').get(phone);
+  if (!user) {
+    const info = db.prepare('INSERT INTO users (role, full_name, phone) VALUES (?, ?, ?)')
+      .run('CUSTOMER', fullName || null, phone);
+    user = db.prepare('SELECT * FROM users WHERE id = ?').get(info.lastInsertRowid);
+  }
+
+  const route = db.prepare(
+    'SELECT * FROM fare_rules WHERE origin = ? AND destination = ? AND active = 1 LIMIT 1'
+  ).get(pickup, drop);
+
+  const estimated = route
+    ? (carCategory === 'sedan' ? route.sedan_fare : carCategory === 'suv' ? route.suv_fare : route.traveller_fare)
+    : null;
+
+  const bookingRef = `SY-${nano()}`;
+  const info = db.prepare(`
+    INSERT INTO bookings (
+      booking_ref, customer_id, service_type, pickup_text, drop_text,
+      trip_datetime, car_category, estimated_fare, customer_note, status
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING')
+  `).run(
+    bookingRef,
+    user.id,
+    serviceType,
+    pickup,
+    drop,
+    tripDatetime,
+    carCategory,
+    estimated,
+    customerNote || null
+  );
+
+  db.prepare(`
+    INSERT INTO booking_status_events (booking_id, old_status, new_status, changed_by_user_id, note)
+    VALUES (?, NULL, 'PENDING', ?, ?)
+  `).run(info.lastInsertRowid, user.id, 'Booking created');
+
+  const booking = db.prepare('SELECT * FROM bookings WHERE id = ?').get(info.lastInsertRowid);
+  res.status(201).json({ booking });
+});
+
+app.get('/bookings/:id', (req, res) => {
+  const id = Number(req.params.id);
+  const booking = db.prepare('SELECT * FROM bookings WHERE id = ?').get(id);
+  if (!booking) return res.status(404).json({ error: 'Booking not found' });
+
+  const events = db.prepare(
+    'SELECT * FROM booking_status_events WHERE booking_id = ? ORDER BY id ASC'
+  ).all(id);
+  res.json({ booking, events });
+});
+
+app.get('/bookings', (req, res) => {
+  const { phone } = req.query;
+  if (!phone) return res.status(400).json({ error: 'phone query param is required' });
+
+  const user = db.prepare('SELECT * FROM users WHERE phone = ?').get(String(phone));
+  if (!user) return res.json({ bookings: [] });
+
+  const bookings = db.prepare(
+    'SELECT * FROM bookings WHERE customer_id = ? ORDER BY datetime(created_at) DESC'
+  ).all(user.id);
+  res.json({ bookings });
+});
+
+app.post('/bookings/:id/cancel', (req, res) => {
+  const id = Number(req.params.id);
+  const { phone, note } = req.body;
+  if (!phone) return res.status(400).json({ error: 'phone is required' });
+
+  const booking = db.prepare('SELECT * FROM bookings WHERE id = ?').get(id);
+  if (!booking) return res.status(404).json({ error: 'Booking not found' });
+
+  const customer = db.prepare('SELECT * FROM users WHERE id = ?').get(booking.customer_id);
+  if (!customer || customer.phone !== phone) {
+    return res.status(403).json({ error: 'This booking does not belong to this phone number' });
+  }
+  if (booking.status === 'COMPLETED' || booking.status === 'CANCELLED') {
+    return res.status(400).json({ error: 'Booking can no longer be cancelled' });
+  }
+
+  db.prepare("UPDATE bookings SET status = 'CANCELLED', updated_at = datetime('now') WHERE id = ?").run(id);
+  db.prepare(`
+    INSERT INTO booking_status_events (booking_id, old_status, new_status, changed_by_user_id, note)
+    VALUES (?, ?, 'CANCELLED', ?, ?)
+  `).run(id, booking.status, booking.customer_id, note || 'Cancelled by customer');
+
+  const updated = db.prepare('SELECT * FROM bookings WHERE id = ?').get(id);
+  res.json({ booking: updated });
+});
+
+app.get('/admin/bookings', (req, res) => {
+  const status = req.query.status;
+  if (status && !validStatuses.has(String(status))) {
+    return res.status(400).json({ error: 'Invalid status filter' });
+  }
+
+  const rows = status
+    ? db.prepare('SELECT * FROM bookings WHERE status = ? ORDER BY created_at DESC').all(String(status))
+    : db.prepare('SELECT * FROM bookings ORDER BY created_at DESC').all();
+
+  res.json({ bookings: rows });
+});
+
+app.patch('/admin/bookings/:id/status', (req, res) => {
+  const id = Number(req.params.id);
+  const { status, changedByUserId, note } = req.body;
+
+  if (!status || !validStatuses.has(status)) {
+    return res.status(400).json({ error: 'Valid status is required' });
+  }
+
+  const booking = db.prepare('SELECT * FROM bookings WHERE id = ?').get(id);
+  if (!booking) return res.status(404).json({ error: 'Booking not found' });
+
+  db.prepare(`
+    UPDATE bookings
+    SET status = ?, updated_at = datetime('now')
+    WHERE id = ?
+  `).run(status, id);
+
+  db.prepare(`
+    INSERT INTO booking_status_events (booking_id, old_status, new_status, changed_by_user_id, note)
+    VALUES (?, ?, ?, ?, ?)
+  `).run(id, booking.status, status, changedByUserId || null, note || null);
+
+  const updated = db.prepare('SELECT * FROM bookings WHERE id = ?').get(id);
+  res.json({ booking: updated });
+});
+
+app.listen(port, () => {
+  console.log(`SadakYatra backend running on http://localhost:${port}`);
+});
