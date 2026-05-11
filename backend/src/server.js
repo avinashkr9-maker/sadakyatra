@@ -59,6 +59,10 @@ const appConfig = {
   ]
 };
 
+app.get('/', (_req, res) => {
+  res.send('SadakYatra backend is running');
+});
+
 app.get('/health', (_req, res) => {
   res.json({ ok: true, service: 'sadakyatra-backend' });
 });
