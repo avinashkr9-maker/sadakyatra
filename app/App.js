@@ -4,6 +4,7 @@ import {
   ImageBackground,
   Image,
   Linking,
+  Modal,
   Platform,
   Pressable,
   SafeAreaView,
@@ -15,7 +16,7 @@ import {
   View
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-import { setBaseUrl } from './src/api/client';
+import { login, setAuthToken, setBaseUrl } from './src/api/client';
 import {
   ArrowUpRight,
   ArrowRight,
@@ -236,6 +237,11 @@ export default function App() {
   const [bookingError, setBookingError] = useState(null);
   const [submitting, setSubmitting] = useState(false);
   const [apiUrl, setApiUrl] = useState('http://192.168.29.135:4000');
+  const [user, setUser] = useState(null);
+  const [authModalVisible, setAuthModalVisible] = useState(false);
+  const [authName, setAuthName] = useState('');
+  const [authLoading, setAuthLoading] = useState(false);
+  const [authError, setAuthError] = useState(null);
 
   const matchedRoute = useMemo(
     () => ROUTES.find((r) => r.from.toLowerCase() === from.toLowerCase() && r.to.toLowerCase() === to.toLowerCase()),
@@ -246,9 +252,48 @@ export default function App() {
     setBaseUrl(apiUrl);
   }, [apiUrl]);
 
+  useEffect(() => {
+    if (user?.phone && user.phone !== phone) {
+      setPhone(user.phone);
+    }
+  }, [user]);
+
+  async function handleLogin() {
+    if (!phone) {
+      Alert.alert('Phone required', 'Enter your phone number to log in.');
+      return false;
+    }
+    setAuthError(null);
+    setAuthLoading(true);
+    try {
+      const data = await login(phone, authName || null);
+      setUser(data.user);
+      setAuthToken(data.token);
+      setAuthModalVisible(false);
+      setAuthName('');
+      Alert.alert('Logged in', `Welcome ${data.user.fullName || data.user.phone}!`);
+      return true;
+    } catch (err) {
+      const message = err.message || 'Unable to log in. Please try again.';
+      setAuthError(message);
+      return false;
+    } finally {
+      setAuthLoading(false);
+    }
+  }
+
+  async function ensureLoggedIn() {
+    if (user) return true;
+    return handleLogin();
+  }
+
   async function sendBooking() {
     if (!phone) {
       return Alert.alert('Phone required', 'Enter your phone number so we can confirm your booking.');
+    }
+
+    if (!(await ensureLoggedIn())) {
+      return;
     }
 
     const serviceType = serviceTypeMap[service] || 'OUTSTATION';
@@ -326,7 +371,7 @@ export default function App() {
   return (
     <SafeAreaView style={styles.screen}>
       <StatusBar barStyle="light-content" />
-      <Header />
+      <Header user={user} onLoginPress={() => setAuthModalVisible(true)} />
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
         {tab === 'home' && <HomeScreen onBook={() => setTab('book')} onRoute={(route) => { setFrom(route.from); setTo(route.to); setTab('book'); }} apiUrl={apiUrl} setApiUrl={setApiUrl} />}
         {tab === 'fleet' && <FleetScreen />}
@@ -367,11 +412,49 @@ export default function App() {
         {tab === 'about' && <AboutScreen lastTrip={lastTrip} />}
       </ScrollView>
       <BottomNav tab={tab} onTab={setTab} />
+      <Modal visible={authModalVisible} animationType="slide" transparent>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <Text style={styles.modalTitle}>Login to SadakYatra</Text>
+            <Text style={styles.modalSubtitle}>Enter your phone and optional name to continue.</Text>
+            <View style={styles.fieldBox}>
+              <Text style={styles.fieldLabel}>Phone</Text>
+              <TextInput
+                value={phone}
+                onChangeText={setPhone}
+                placeholder="+91 93040..."
+                placeholderTextColor={colors.placeholder}
+                keyboardType="phone-pad"
+                style={styles.fieldInput}
+              />
+            </View>
+            <View style={styles.fieldBox}>
+              <Text style={styles.fieldLabel}>Name (optional)</Text>
+              <TextInput
+                value={authName}
+                onChangeText={setAuthName}
+                placeholder="Your name"
+                placeholderTextColor={colors.placeholder}
+                style={styles.fieldInput}
+              />
+            </View>
+            {authError ? <Text style={styles.errorText}>{authError}</Text> : null}
+            <View style={styles.modalButtons}>
+              <Pressable style={styles.modalButton} onPress={handleLogin} disabled={authLoading}>
+                <Text style={styles.modalButtonText}>{authLoading ? 'Logging in…' : 'Login'}</Text>
+              </Pressable>
+              <Pressable style={styles.modalButtonSecondary} onPress={() => setAuthModalVisible(false)}>
+                <Text style={styles.modalButtonTextSecondary}>Cancel</Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
 
-function Header() {
+function Header({ user, onLoginPress }) {
   return (
     <View style={styles.header}>
       <BrandGradient style={styles.logoWrap}>
@@ -381,9 +464,15 @@ function Header() {
         <Text style={styles.logoTitle}>सड़क<Text style={styles.logoAccent}>Yatra</Text></Text>
         <Text style={styles.logoSub}>{BRAND.tagline}</Text>
       </View>
-      <Pressable style={styles.callButton} onPress={() => Linking.openURL(`tel:${BRAND.phone}`)}>
-        <Phone color={colors.primary} size={18} strokeWidth={2.5} />
-      </Pressable>
+      <View style={styles.headerRight}>
+        <Pressable style={styles.headerAction} onPress={onLoginPress}>
+          <User color={colors.primary} size={18} strokeWidth={2.5} />
+          <Text style={styles.headerActionText}>{user ? 'Account' : 'Login'}</Text>
+        </Pressable>
+        <Pressable style={styles.callButton} onPress={() => Linking.openURL(`tel:${BRAND.phone}`)}>
+          <Phone color={colors.primary} size={18} strokeWidth={2.5} />
+        </Pressable>
+      </View>
     </View>
   );
 }
@@ -993,6 +1082,9 @@ const styles = StyleSheet.create({
   logoTitle: { color: colors.text, fontSize: 16, fontWeight: '900', letterSpacing: -0.4 },
   logoAccent: { color: colors.primary },
   logoSub: { color: colors.muted, fontSize: 10, letterSpacing: 1.2, textTransform: 'uppercase', marginTop: 1 },
+  headerRight: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  headerAction: { flexDirection: 'row', alignItems: 'center', gap: 6, borderRadius: 16, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border, paddingHorizontal: 10, paddingVertical: 10 },
+  headerActionText: { color: colors.primary, fontSize: 12, fontWeight: '800', textTransform: 'uppercase' },
   callButton: { width: 42, height: 42, borderRadius: 21, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border, alignItems: 'center', justifyContent: 'center' },
   mapHero: { height: 340, justifyContent: 'space-between' },
   mapHeroImage: { opacity: 0.72 },
@@ -1312,6 +1404,15 @@ const styles = StyleSheet.create({
   apiSettingsToggle: { padding: 16, alignItems: 'center' },
   apiSettingsText: { color: colors.muted, fontSize: 14, fontWeight: '600' },
   apiSettings: { marginHorizontal: 16, marginBottom: 16, padding: 16, backgroundColor: colors.surface, borderRadius: 12, borderWidth: 1, borderColor: colors.border },
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', justifyContent: 'center', padding: 20 },
+  modalContent: { borderRadius: 24, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border, padding: 20 },
+  modalTitle: { color: colors.text, fontSize: 18, fontWeight: '900', marginBottom: 8 },
+  modalSubtitle: { color: colors.muted, fontSize: 12, marginBottom: 16 },
+  modalButtons: { flexDirection: 'row', gap: 12, marginTop: 14 },
+  modalButton: { flex: 1, backgroundColor: colors.yellow, paddingVertical: 14, borderRadius: 14, alignItems: 'center' },
+  modalButtonSecondary: { flex: 1, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surfaceElevated, paddingVertical: 14, borderRadius: 14, alignItems: 'center' },
+  modalButtonText: { color: colors.primaryForeground, fontSize: 14, fontWeight: '900' },
+  modalButtonTextSecondary: { color: colors.text, fontSize: 14, fontWeight: '900' },
   apiSettingsLabel: { color: colors.text, fontSize: 14, fontWeight: '600', marginBottom: 8 },
   apiUrlInput: { borderWidth: 1, borderColor: colors.border, borderRadius: 8, padding: 12, fontSize: 14, color: colors.text, backgroundColor: colors.bg, marginBottom: 12 },
   apiButtons: { flexDirection: 'row', gap: 12 },

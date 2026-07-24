@@ -10,6 +10,8 @@ export function setBaseUrl(url) {
   BASE_URL = url.trim().replace(/\/+$/, '');
 }
 
+let authToken = null;
+
 async function request(path, options = {}) {
   const expoHost = Constants?.expoConfig?.hostUri?.split(':')?.[0];
   const candidates = [
@@ -24,8 +26,15 @@ async function request(path, options = {}) {
     try {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 7000);
+      const headers = {
+        'Content-Type': 'application/json',
+        ...(options.headers || {})
+      };
+      if (authToken) {
+        headers.Authorization = `Bearer ${authToken}`;
+      }
       const res = await fetch(`${base}${path}`, {
-        headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
+        headers,
         signal: controller.signal,
         ...options
       });
@@ -48,6 +57,15 @@ export function health() {
 }
 export function getAppConfig() {
   return request('/app/config');
+}
+export function login(phone, fullName) {
+  return request('/auth/mock-login', {
+    method: 'POST',
+    body: JSON.stringify({ phone, fullName })
+  });
+}
+export function setAuthToken(token) {
+  authToken = token;
 }
 export function estimateFare(origin, destination, category) {
   return request('/pricing/estimate', { method: 'POST', body: JSON.stringify({ origin, destination, category }) });

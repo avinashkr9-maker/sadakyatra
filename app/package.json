@@ -4,19 +4,21 @@
   "private": true,
   "main": "index.js",
   "scripts": {
-    "start": "expo start",
+    "start": "expo start --dev-client",
     "phone": "scripts/start-phone.sh",
     "android": "expo run:android",
-    "web": "expo start --web"
+    "web": "expo start --web",
+    "doctor": "expo-doctor"
   },
   "dependencies": {
-    "expo": "52.0.0",
-    "expo-linear-gradient": "13.0.2",
-    "expo-location": "17.0.1",
-    "expo-status-bar": "1.6.0",
-    "lucide-react-native": "^1.14.0",
-    "react": "18.1.0",
-    "react-native": "0.73.6",
+    "expo": "~54.0.0",
+    "expo-constants": "~18.0.13",
+    "expo-linear-gradient": "~15.0.8",
+    "expo-location": "~19.0.8",
+    "expo-status-bar": "~3.0.9",
+    "lucide-react-native": "^1.26.0",
+    "react": "19.1.0",
+    "react-native": "0.81.4",
     "react-native-maps": "1.20.1",
     "react-native-svg": "15.12.1"
   }
