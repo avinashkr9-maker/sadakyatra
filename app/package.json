@@ -8,7 +8,8 @@
     "phone": "scripts/start-phone.sh",
     "android": "expo run:android",
     "web": "expo start --web",
-    "doctor": "expo-doctor"
+    "doctor": "expo-doctor",
+    "ios": "expo run:ios"
   },
   "dependencies": {
     "expo": "~54.0.0",

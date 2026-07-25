@@ -16,7 +16,15 @@ import {
   View
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-import { login, setAuthToken, setBaseUrl } from './src/api/client';
+import {
+  login,
+  setAuthToken,
+  setBaseUrl,
+  createBooking,
+  listBookings,
+  warmUp,
+  isBackendOnline
+} from './src/api/client';
 import {
   ArrowUpRight,
   ArrowRight,
@@ -252,6 +260,12 @@ export default function App() {
     setBaseUrl(apiUrl);
   }, [apiUrl]);
 
+  // App khulte hi background me backend dhoond lo, taaki pehla
+  // login/booking turant lage (koi 7s wait nahi).
+  useEffect(() => {
+    warmUp();
+  }, []);
+
   useEffect(() => {
     if (user?.phone && user.phone !== phone) {
       setPhone(user.phone);
@@ -274,6 +288,16 @@ export default function App() {
       Alert.alert('Logged in', `Welcome ${data.user.fullName || data.user.phone}!`);
       return true;
     } catch (err) {
+      // Backend offline hai — customer ko login pe atkaao mat.
+      // WhatsApp booking waise bhi kaam karta hai.
+      if (err.offline) {
+        setAuthModalVisible(false);
+        Alert.alert(
+          'WhatsApp par book karein',
+          'Abhi seedha booking WhatsApp par le rahe hain — turant confirm milega.'
+        );
+        return false;
+      }
       const message = err.message || 'Unable to log in. Please try again.';
       setAuthError(message);
       return false;
@@ -284,7 +308,22 @@ export default function App() {
 
   async function ensureLoggedIn() {
     if (user) return true;
+    // Agar backend offline hai to login skip karke WhatsApp par bhejo.
+    const online = await isBackendOnline();
+    if (!online) return false;
     return handleLogin();
+  }
+
+  function bookOnWhatsApp() {
+    const msg =
+      `Hi ${BRAND.name}! Booking request:\n` +
+      `• Service: ${service}\n` +
+      `• From: ${from}\n` +
+      `• To: ${to}\n` +
+      `• Date: ${dateText}\n` +
+      (phone ? `• Phone: ${phone}\n` : '') +
+      `Please confirm availability & fare.`;
+    Linking.openURL(wa(msg));
   }
 
   async function sendBooking() {
@@ -292,7 +331,14 @@ export default function App() {
       return Alert.alert('Phone required', 'Enter your phone number so we can confirm your booking.');
     }
 
+    // Backend offline ho to seedha WhatsApp par booking bhejo.
+    if (!(await isBackendOnline())) {
+      bookOnWhatsApp();
+      return;
+    }
+
     if (!(await ensureLoggedIn())) {
+      bookOnWhatsApp();
       return;
     }
 
@@ -332,7 +378,8 @@ export default function App() {
       setTab('bookings');
       await fetchBookings();
     } catch (err) {
-      Alert.alert('Booking failed', err.message || 'Please try again.');
+      // In-app booking fail — customer ko rokna nahi, WhatsApp par bhejo.
+      bookOnWhatsApp();
     } finally {
       setSubmitting(false);
     }
