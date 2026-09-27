@@ -1,0 +1,30 @@
+{
+  "_note": "Site ke saare pages. slug = URL ka naam. htmlUrl=true matlab URL ke end mein .html lagta hai (purane URLs same rakhne ke liye). priority/changefreq sitemap ke liye.",
+  "pages": [
+    { "slug": "index", "path": "/", "priority": 1.0, "changefreq": "weekly" },
+    { "slug": "cab-service-muzaffarpur", "htmlUrl": true, "priority": 0.9, "changefreq": "weekly" },
+    { "slug": "baraat-car-muzaffarpur", "htmlUrl": true, "priority": 0.9, "changefreq": "weekly" },
+    { "slug": "wedding-car-rental-muzaffarpur", "htmlUrl": true, "priority": 0.9, "changefreq": "weekly" },
+    { "slug": "muzaffarpur-to-patna-cab", "htmlUrl": true, "priority": 0.9, "changefreq": "weekly" },
+    { "slug": "patna-to-muzaffarpur-cab", "htmlUrl": true, "priority": 0.9, "changefreq": "weekly" },
+    { "slug": "muzaffarpur-to-darbhanga-cab", "htmlUrl": true, "priority": 0.9, "changefreq": "weekly" },
+    { "slug": "muzaffarpur-to-sitamarhi-cab", "htmlUrl": true, "priority": 0.8, "changefreq": "weekly" },
+    { "slug": "muzaffarpur-to-motihari-cab", "htmlUrl": true, "priority": 0.8, "changefreq": "weekly" },
+    { "slug": "muzaffarpur-to-samastipur-cab", "htmlUrl": true, "priority": 0.8, "changefreq": "weekly" },
+    { "slug": "muzaffarpur-patna-airport-cab", "htmlUrl": true, "priority": 0.8, "changefreq": "weekly" },
+    { "slug": "darbhanga-airport-cab-muzaffarpur", "htmlUrl": true, "priority": 0.8, "changefreq": "weekly" },
+    { "slug": "tempo-traveller-muzaffarpur", "htmlUrl": true, "priority": 0.8, "changefreq": "weekly" },
+    { "slug": "railway-station-taxi-muzaffarpur", "htmlUrl": true, "priority": 0.8, "changefreq": "weekly" },
+    { "slug": "bus-stand-taxi-muzaffarpur", "htmlUrl": true, "priority": 0.8, "changefreq": "weekly" },
+    { "slug": "corporate-cab-muzaffarpur", "htmlUrl": true, "priority": 0.7, "changefreq": "weekly" },
+    { "slug": "one-way-cab-muzaffarpur-delhi", "htmlUrl": true, "priority": 0.7, "changefreq": "weekly" },
+    { "slug": "garibnath-temple-taxi-muzaffarpur", "htmlUrl": true, "priority": 0.6, "changefreq": "weekly" },
+    { "slug": "taxi-service-muzaffarpur", "priority": 0.6, "changefreq": "weekly" },
+    { "slug": "contact-us", "htmlUrl": true, "priority": 0.5, "changefreq": "monthly" },
+    { "slug": "privacy-policy", "htmlUrl": true, "priority": 0.4, "changefreq": "monthly" }
+  ],
+  "redirects": [
+    { "from": "/outstation-cab-muzaffarpur-patna.html", "to": "/muzaffarpur-to-patna-cab.html" },
+    { "from": "/index.html", "to": "/" }
+  ]
+}

@@ -1,0 +1,1349 @@
+<script type="application/ld+json">
+{
+      "@context": "https://schema.org",
+      "@type": "LocalBusiness",
+      "@id": "https://sadakyatra.co.in",
+      "name": "SadakYatra",
+      "alternateName": "Sadak Yatra Cab Service",
+      "description": "Muzaffarpur's highest-rated cab rental and wedding car service. Specialising in baraat, bidai, outstation, airport transfers across Bihar.",
+      "url": "https://sadakyatra.co.in",
+      "telephone": "+919304057169",
+      "email": "sadakyatra.in@gmail.com",
+      "address": {
+        "@type": "PostalAddress",
+        "streetAddress": "Novel Nook Library, Ramdayalu Nagar",
+        "addressLocality": "Muzaffarpur",
+        "addressRegion": "Bihar",
+        "postalCode": "842001",
+        "addressCountry": "IN"
+      },
+      "aggregateRating": {
+        "@type": "AggregateRating",
+        "ratingValue": "4.9",
+        "reviewCount": "43",
+        "bestRating": "5",
+        "worstRating": "1"
+      },
+      "openingHoursSpecification": {
+        "@type": "OpeningHoursSpecification",
+        "dayOfWeek": ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"],
+        "opens": "00:00",
+        "closes": "23:59"
+      },
+      "priceRange": "₹₹",
+      "hasMap": "https://maps.google.com/?q=Muzaffarpur+Bihar",
+      "serviceArea": {"@type": "State", "name": "Bihar"},
+      "sameAs": [
+        "https://www.facebook.com/sadakyatra",
+        "https://www.instagram.com/sadakyatra"
+      ]
+    }
+</script>
+
+<style>
+html { scroll-behavior: smooth; }
+
+      /* ---- ANIMATIONS ---- */
+      @keyframes fadeUp   { from{opacity:0;transform:translateY(28px)} to{opacity:1;transform:translateY(0)} }
+      @keyframes float    { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-7px)} }
+      @keyframes ticker   { from{transform:translateX(0)} to{transform:translateX(-50%)} }
+      @keyframes waPulse  { 0%,100%{box-shadow:0 0 0 0 rgba(37,211,102,.45)} 60%{box-shadow:0 0 0 14px rgba(37,211,102,0)} }
+
+      .anim-fade-up  { animation: fadeUp .65s ease both; }
+      .d1{animation-delay:.10s} .d2{animation-delay:.20s} .d3{animation-delay:.30s} .d4{animation-delay:.40s}
+      .float-anim    { animation: float 3.2s ease-in-out infinite; }
+      .wa-float      { animation: waPulse 2.2s infinite; }
+
+      /* ---- REVEAL ON SCROLL ---- */
+      .reveal{opacity:0;transform:translateY(32px);transition:opacity .6s ease,transform .6s ease}
+      .reveal.vis{opacity:1;transform:translateY(0)}
+
+      /* ---- TICKER ---- */
+      .ticker-wrap{overflow:hidden}
+      .ticker-inner{display:flex;animation:ticker 28s linear infinite;white-space:nowrap}
+      .ticker-inner:hover{animation-play-state:paused}
+
+      /* ---- FLEET CARD ---- */
+      .fleet-card{transition:transform .28s ease,box-shadow .28s ease}
+      .fleet-card:hover{transform:translateY(-5px);box-shadow:0 22px 44px rgba(0,0,0,.10)}
+
+      /* ---- ROUTE CARD ---- */
+      .route-card{transition:all .22s ease}
+      .route-card:hover{border-color:#FFCC00;transform:translateY(-2px);box-shadow:0 8px 20px rgba(255,204,0,.15)}
+
+      /* ---- REVIEW CARD ---- */
+      .review-card{transition:transform .25s ease}
+      .review-card:hover{transform:translateY(-3px)}
+
+      /* ---- FORM INPUTS ---- */
+      input:focus,select:focus{outline:none!important;border-color:#FFCC00!important;box-shadow:0 0 0 3px rgba(255,204,0,.18)!important}
+
+      /* ---- SCROLLBAR ---- */
+      ::-webkit-scrollbar{width:4px}
+      ::-webkit-scrollbar-thumb{background:#FFCC00;border-radius:4px}
+
+      /* ---- HERO OVERLAY ---- */
+      .hero-ov{background:linear-gradient(135deg,rgba(0,0,0,.88) 0%,rgba(0,0,0,.55) 100%)}
+
+      /* Feature card inside dark section */
+      .feat-card{background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.1);border-radius:14px;padding:18px 16px;transition:background .2s ease}
+      .feat-card:hover{background:rgba(255,204,0,.08);border-color:rgba(255,204,0,.3)}
+      @keyframes shimmer{0%{background-position:-700px 0}100%{background-position:700px 0}}
+      .skeleton{background:linear-gradient(90deg,#f0f0f0 25%,#e0e0e0 50%,#f0f0f0 75%);background-size:700px 100%;animation:shimmer 1.4s infinite}
+      .skeleton-dark{background:linear-gradient(90deg,#222 25%,#2a2a2a 50%,#222 75%);background-size:700px 100%;animation:shimmer 1.4s infinite}
+</style>
+
+<section aria-label="Hero — SadakYatra Cab Service Muzaffarpur" class="relative pt-[68px] min-h-screen flex items-center bg-brand-black overflow-hidden">
+<div class="absolute inset-0">
+<img alt="Premium cab service Muzaffarpur Bihar" class="w-full h-full object-cover opacity-35" decoding="sync" loading="eager" src="https://plain-apac-prod-public.komododecks.com/202604/12/JWeiW7AVXRKXYa5vUYy5/image.jpg"/>
+<div class="absolute inset-0 hero-ov"></div>
+</div>
+<div class="absolute left-0 top-0 bottom-0 w-1 bg-brand-yellow hidden lg:block"></div>
+<div class="relative z-10 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-20 w-full flex flex-col lg:flex-row items-center gap-12">
+<div class="w-full lg:w-7/12 text-white">
+<div class="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-brand-yellow/15 border border-brand-yellow/35 mb-6 anim-fade-up">
+<i class="ri-star-fill text-brand-yellow"></i>
+<span class="text-brand-yellow font-bold text-sm">4.9/5 · Muzaffarpur's #1 Rated Cab Service</span>
+</div>
+<h1 class="text-4xl sm:text-5xl lg:text-6xl font-extrabold tracking-tight leading-[1.08] mb-6 anim-fade-up d1">
+        Your Premium Ride,<br/>
+<span class="text-brand-yellow">Ready When You Are.</span>
+</h1>
+<p class="text-gray-300 text-lg leading-relaxed mb-8 max-w-xl anim-fade-up d2 font-medium">
+        From grand decorated baraat entries to reliable Muzaffarpur–Patna drops — sanitized AC cabs, professional drivers, zero hidden charges across Bihar.
+      </p>
+<div class="flex flex-wrap items-center gap-6 mb-8 anim-fade-up d3">
+<div>
+<div class="text-3xl font-black text-brand-yellow">4.9<i class="ri-star-fill text-2xl ml-1"></i></div>
+<div class="text-xs text-gray-400 font-bold mt-0.5 uppercase tracking-wide">JustDial Rating</div>
+</div>
+<div class="h-10 w-px bg-gray-700"></div>
+<div>
+<div class="text-3xl font-black text-brand-yellow">40+</div>
+<div class="text-xs text-gray-400 font-bold mt-0.5 uppercase tracking-wide">Google Reviews</div>
+</div>
+<div class="h-10 w-px bg-gray-700"></div>
+<div>
+<div class="text-3xl font-black text-brand-yellow">24×7</div>
+<div class="text-xs text-gray-400 font-bold mt-0.5 uppercase tracking-wide">Available</div>
+</div>
+</div>
+<div class="flex flex-wrap gap-3 anim-fade-up d4">
+<a class="inline-flex items-center gap-2 px-7 py-3.5 bg-brand-yellow text-brand-black font-bold rounded-xl hover:bg-yellow-400 hover:scale-105 transition-all shadow-lg" href="https://wa.me/919304057169?text=Hi%20SadakYatra!%20I%20want%20to%20book%20a%20cab." rel="noopener" target="_blank">
+<i class="ri-whatsapp-line text-lg"></i> Book on WhatsApp
+        </a>
+<a class="inline-flex items-center gap-2 px-7 py-3.5 bg-white/10 border border-white/25 text-white font-bold rounded-xl hover:bg-white/20 transition-all backdrop-blur-sm" href="tel:9304057169">
+<i class="ri-phone-line text-lg"></i> Call Now
+        </a>
+</div>
+</div>
+<div class="w-full lg:w-5/12 anim-fade-up d2">
+<div class="bg-white rounded-2xl shadow-2xl border border-gray-100 p-7 text-brand-black">
+<h2 class="text-2xl font-bold mb-1">Get Instant Quote</h2>
+<p class="text-xs text-gray-500 font-medium mb-4 flex items-center gap-1.5">
+<i class="ri-flashlight-line text-brand-yellow"></i>
+          Fill below → WhatsApp quote in minutes
+        </p>
+<!-- Trip Type Toggle -->
+<div class="flex gap-2 mb-5 p-1 bg-gray-100 rounded-xl">
+<button class="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-xs font-bold transition-all bg-brand-yellow text-brand-black shadow-sm" id="form-oneway-btn" onclick="setFormTripType('oneway')">
+<i class="ri-arrow-right-line"></i> One Way
+          </button>
+<button class="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-xs font-bold transition-all text-gray-500" id="form-roundtrip-btn" onclick="setFormTripType('roundtrip')">
+<i class="ri-arrow-left-right-line"></i> Round Trip
+          </button>
+</div>
+<div class="space-y-4">
+<div class="grid grid-cols-2 gap-3">
+<div>
+<label class="block text-xs font-bold text-gray-500 uppercase mb-1.5">
+<i class="ri-map-pin-2-line mr-1 text-brand-yellow"></i>From
+              </label>
+<input class="w-full px-3 py-3 rounded-xl border border-gray-200 text-sm font-medium transition-all" id="f-pickup" placeholder="Muzaffarpur" type="text"/>
+</div>
+<div>
+<label class="block text-xs font-bold text-gray-500 uppercase mb-1.5">
+<i class="ri-map-pin-line mr-1 text-brand-yellow"></i>To
+              </label>
+<input class="w-full px-3 py-3 rounded-xl border border-gray-200 text-sm font-medium transition-all" id="f-drop" placeholder="Patna Airport" type="text"/>
+</div>
+</div>
+<div>
+<label class="block text-xs font-bold text-gray-500 uppercase mb-1.5">
+<i class="ri-taxi-line mr-1 text-brand-yellow"></i>Service Type
+            </label>
+<select class="w-full px-3 py-3 rounded-xl border border-gray-200 text-sm font-medium bg-white transition-all" id="f-service">
+<option value="Outstation / Intercity">Outstation / Intercity</option>
+<option value="Wedding Car — Baraat / Bidai">Wedding Car — Baraat / Bidai</option>
+<option value="Airport Transfer">Airport Transfer</option>
+<option value="Local City Ride">Local City Ride</option>
+<option value="Tempo Traveller">Tempo Traveller</option>
+</select>
+</div>
+<div class="grid grid-cols-2 gap-3">
+<div>
+<label class="block text-xs font-bold text-gray-500 uppercase mb-1.5">
+<i class="ri-calendar-line mr-1 text-brand-yellow"></i>Date
+              </label>
+<input class="w-full px-3 py-3 rounded-xl border border-gray-200 text-sm font-medium transition-all" id="f-date" type="date"/>
+</div>
+<div>
+<label class="block text-xs font-bold text-gray-500 uppercase mb-1.5">
+<i class="ri-smartphone-line mr-1 text-brand-yellow"></i>Phone
+              </label>
+<input class="w-full px-3 py-3 rounded-xl border border-gray-200 text-sm font-medium transition-all" id="f-phone" placeholder="+91 XXXXX XXXXX" type="tel"/>
+</div>
+</div>
+<!-- Return Date — visible only for Round Trip -->
+<div class="overflow-hidden transition-all duration-300" id="f-return-wrap" style="max-height:0;opacity:0">
+<div>
+<label class="block text-xs font-bold text-gray-500 uppercase mb-1.5">
+<i class="ri-calendar-check-line mr-1 text-brand-yellow"></i>Return Date
+              </label>
+<input class="w-full px-3 py-3 rounded-xl border border-gray-200 text-sm font-medium transition-all" id="f-return" type="date"/>
+</div>
+</div>
+<button class="w-full mt-1 bg-brand-black text-brand-yellow font-bold text-base py-4 rounded-xl hover:bg-gray-800 hover:scale-[1.02] transition-all flex justify-center items-center gap-2 shadow-md" onclick="submitForm()">
+<i class="ri-whatsapp-line text-lg"></i> Request Quote on WhatsApp
+          </button>
+<p class="text-center text-xs text-gray-400 font-medium">
+<i class="ri-shield-check-line text-green-500 mr-1"></i>No hidden charges · Instant confirmation
+          </p>
+</div>
+</div>
+</div>
+</div>
+<div class="absolute bottom-7 left-1/2 -translate-x-1/2 z-10 float-anim opacity-60">
+<i class="ri-arrow-down-s-line text-white text-3xl"></i>
+</div>
+</section>
+<div aria-hidden="true" class="bg-brand-yellow py-3 ticker-wrap">
+<div class="ticker-inner gap-0 text-brand-black font-bold text-sm">
+<span class="mx-8 flex items-center gap-2"><i class="ri-star-fill"></i> Muzaffarpur's Highest Rated — 4.9★</span>
+<span class="mx-8 flex items-center gap-2"><i class="ri-shield-check-line"></i> Sanitized AC Cabs</span>
+<span class="mx-8 flex items-center gap-2"><i class="ri-user-star-line"></i> Professional Chauffeurs</span>
+<span class="mx-8 flex items-center gap-2"><i class="ri-money-dollar-circle-line"></i> Zero Hidden Charges</span>
+<span class="mx-8 flex items-center gap-2"><i class="ri-whatsapp-line"></i> Instant WhatsApp Confirmation</span>
+<span class="mx-8 flex items-center gap-2"><i class="ri-heart-line"></i> Wedding Car Specialists</span>
+<span class="mx-8 flex items-center gap-2"><i class="ri-time-line"></i> 24×7 Available</span>
+<span class="mx-8 flex items-center gap-2"><i class="ri-star-fill"></i> Muzaffarpur's Highest Rated — 4.9★</span>
+<span class="mx-8 flex items-center gap-2"><i class="ri-shield-check-line"></i> Sanitized AC Cabs</span>
+<span class="mx-8 flex items-center gap-2"><i class="ri-user-star-line"></i> Professional Chauffeurs</span>
+<span class="mx-8 flex items-center gap-2"><i class="ri-money-dollar-circle-line"></i> Zero Hidden Charges</span>
+<span class="mx-8 flex items-center gap-2"><i class="ri-whatsapp-line"></i> Instant WhatsApp Confirmation</span>
+<span class="mx-8 flex items-center gap-2"><i class="ri-heart-line"></i> Wedding Car Specialists</span>
+<span class="mx-8 flex items-center gap-2"><i class="ri-time-line"></i> 24×7 Available</span>
+</div>
+</div>
+<section aria-label="Our cab fleet in Muzaffarpur" class="py-14 bg-white reveal" id="fleet">
+<div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+<div class="text-center mb-16">
+<span class="inline-flex items-center gap-1.5 text-xs font-bold uppercase tracking-widest text-brand-yellow bg-yellow-50 border border-yellow-100 px-3 py-1.5 rounded-full mb-3">
+<i class="ri-car-line"></i> Our Fleet
+      </span>
+<h2 class="text-3xl lg:text-4xl font-extrabold mb-4">Choose Your Ride</h2>
+<p class="text-gray-500 max-w-xl mx-auto text-sm leading-relaxed font-medium">Well-maintained, sanitized vehicles with professional drivers — for every trip across Bihar.</p>
+</div>
+<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 lg:gap-8 items-stretch">
+<article class="fleet-card border border-brand-borderGray rounded-2xl overflow-hidden bg-white flex flex-col h-full">
+<div class="h-52 relative overflow-hidden">
+<img alt="Premium Sedan cab Muzaffarpur — Honda Amaze Swift Dzire" class="w-full h-full object-cover" decoding="async" src="https://plain-apac-prod-public.komododecks.com/202604/12/KEpS4oudp8YOFnXLr5Gh/image.jpg"/>
+<div class="absolute top-3 right-3 bg-white px-2.5 py-1 text-xs font-bold rounded-full shadow-sm flex items-center gap-1 text-brand-black">
+<i class="ri-user-line text-brand-yellow"></i> 4 Seats
+          </div>
+</div>
+<div class="p-6 flex flex-col flex-1">
+<h3 class="text-xl font-bold mb-1">Premium Sedan</h3>
+<p class="text-gray-400 text-xs font-medium mb-4">Honda Amaze  ·  Swift Dzire</p>
+<ul class="text-sm text-gray-600 font-medium space-y-2 mb-6 flex-1">
+<li class="flex items-center gap-2"><i class="ri-snowflake-line text-blue-400"></i> Fully Air Conditioned</li>
+<li class="flex items-center gap-2"><i class="ri-user-star-line text-brand-yellow"></i> Professional Chauffeur</li>
+<li class="flex items-center gap-2"><i class="ri-plane-line text-gray-400"></i> Best for Airport &amp; Outstation</li>
+</ul>
+<div class="flex items-center justify-between gap-4 pt-5 border-t border-gray-100">
+<div>
+<span class="text-xs text-gray-400 font-bold uppercase tracking-wider">Starts from</span>
+<div class="text-2xl font-black">₹1,699</div>
+</div>
+<a class="shrink-0 flex items-center gap-1.5 px-5 py-2.5 border-2 border-brand-black text-brand-black font-bold rounded-xl text-sm hover:bg-brand-black hover:text-brand-yellow transition-all" href="https://wa.me/919304057169?text=Hi%20SadakYatra!%20I%20want%20to%20book%20a%20Premium%20Sedan.%20Please%20confirm%20availability." rel="noopener" target="_blank">
+<i class="ri-whatsapp-line"></i> Book Now
+            </a>
+</div>
+</div>
+</article>
+<article class="fleet-card border-2 border-brand-yellow rounded-2xl overflow-hidden bg-white shadow-lg relative flex flex-col h-full">
+<div class="absolute top-0 left-1/2 -translate-x-1/2 bg-brand-yellow text-brand-black text-xs font-bold px-5 py-1.5 rounded-b-xl z-20 flex items-center gap-1">
+<i class="ri-star-fill text-xs"></i> MOST POPULAR
+        </div>
+<div class="h-52 relative overflow-hidden mt-2">
+<img alt="Luxury SUV cab Muzaffarpur — Toyota Innova Ertiga Scorpio" class="w-full h-full object-cover" decoding="async" src="https://plain-apac-prod-public.komododecks.com/202604/12/NjtMbDSju98PLrLh0BPf/image.jpg"/>
+<div class="absolute top-3 right-3 bg-white px-2.5 py-1 text-xs font-bold rounded-full shadow-sm flex items-center gap-1 text-brand-black">
+<i class="ri-group-line text-brand-yellow"></i> 6–7 Seats
+          </div>
+</div>
+<div class="p-6 flex flex-col flex-1">
+<h3 class="text-xl font-bold mb-1">Luxury SUV</h3>
+<p class="text-gray-400 text-xs font-medium mb-4">Toyota Innova  ·  Ertiga  ·  Scorpio</p>
+<ul class="text-sm text-gray-600 font-medium space-y-2 mb-6 flex-1">
+<li class="flex items-center gap-2"><i class="ri-layout-grid-line text-brand-yellow"></i> Extra Space &amp; Legroom</li>
+<li class="flex items-center gap-2"><i class="ri-map-2-line text-brand-yellow"></i> Perfect for Family Outstation</li>
+<li class="flex items-center gap-2"><i class="ri-heart-line text-pink-400"></i> Wedding Decoration Available</li>
+</ul>
+<div class="flex items-center justify-between gap-4 pt-5 border-t border-gray-100">
+<div>
+<span class="text-xs text-gray-400 font-bold uppercase tracking-wider">Starts from</span>
+<div class="text-2xl font-black">₹1,999</div>
+</div>
+<a class="shrink-0 flex items-center gap-1.5 px-5 py-2.5 bg-brand-yellow text-brand-black font-bold rounded-xl text-sm hover:bg-yellow-400 transition-all" href="https://wa.me/919304057169?text=Hi%20SadakYatra!%20I%20want%20to%20book%20a%20Luxury%20SUV.%20Please%20confirm%20availability." rel="noopener" target="_blank">
+<i class="ri-whatsapp-line"></i> Book Now
+            </a>
+</div>
+</div>
+</article>
+<article class="fleet-card border border-brand-borderGray rounded-2xl overflow-hidden bg-white flex flex-col h-full md:col-span-2 lg:col-span-1">
+<div class="h-52 relative overflow-hidden">
+<img alt="Tempo Traveller hire Muzaffarpur Bihar" class="w-full h-full object-cover object-center" decoding="async" src="/tempo-traveller-raaz-20260920.jpg"/>
+<div class="absolute top-3 right-3 bg-white px-2.5 py-1 text-xs font-bold rounded-full shadow-sm flex items-center gap-1 text-brand-black">
+<i class="ri-group-2-line text-brand-yellow"></i> 12–26 Seats
+          </div>
+</div>
+<div class="p-6 flex flex-col flex-1">
+<h3 class="text-xl font-bold mb-1">Tempo Traveller</h3>
+<p class="text-gray-400 text-xs font-medium mb-4">Force Traveller  ·  Minibus</p>
+<ul class="text-sm text-gray-600 font-medium space-y-2 mb-6 flex-1">
+<li class="flex items-center gap-2"><i class="ri-sofa-line text-brand-yellow"></i> Pushback Seating</li>
+<li class="flex items-center gap-2"><i class="ri-pray-line text-gray-400"></i> Baraats, Pilgrimages &amp; Trips</li>
+<li class="flex items-center gap-2"><i class="ri-user-2-line text-gray-400"></i> Dual Drivers for Long Routes</li>
+</ul>
+<div class="flex items-center justify-between gap-4 pt-5 border-t border-gray-100">
+<div>
+<span class="text-xs text-gray-400 font-bold uppercase tracking-wider">Starts from</span>
+<div class="text-2xl font-black">₹25/km</div>
+</div>
+<a class="shrink-0 flex items-center gap-1.5 px-5 py-2.5 border-2 border-brand-black text-brand-black font-bold rounded-xl text-sm hover:bg-brand-black hover:text-brand-yellow transition-all" href="https://wa.me/919304057169?text=Hi%20SadakYatra!%20I%20want%20to%20hire%20a%20Tempo%20Traveller.%20Please%20share%20details." rel="noopener" target="_blank">
+<i class="ri-whatsapp-line"></i> Book Now
+            </a>
+</div>
+</div>
+</article>
+</div>
+</div>
+</section>
+<section aria-label="All cab services Muzaffarpur — SadakYatra" class="py-14 bg-white reveal" id="services-slider">
+<div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+<!-- Header -->
+<div class="text-center mb-8">
+<span class="inline-flex items-center gap-2 px-4 py-1.5 bg-brand-yellow/10 text-brand-yellow font-bold text-xs uppercase tracking-widest rounded-full border border-brand-yellow/25 mb-4">
+<i class="ri-car-line text-xs"></i> All Services
+      </span>
+<h2 class="text-4xl lg:text-5xl font-extrabold tracking-tight mb-3">
+        Every Ride, <span class="text-brand-yellow">Every Need</span> — Covered.
+      </h2>
+<p class="text-gray-500 max-w-xl mx-auto text-sm leading-relaxed">From baraat entries to Patna airport drops — SadakYatra covers all routes &amp; occasions across Muzaffarpur &amp; Bihar.</p>
+</div>
+<!-- Slider Card -->
+<div class="relative rounded-[2.5rem] overflow-hidden bg-brand-charcoal border border-gray-800 shadow-2xl">
+<div class="absolute inset-0 opacity-5" style="background-image:radial-gradient(circle at 20% 50%,#FFCC00 0%,transparent 50%),radial-gradient(circle at 80% 20%,#FFCC00 0%,transparent 40%)"></div>
+<div class="relative z-10" id="svc-slider">
+<!-- ═══ SLIDE 1: Wedding / Baraat ═══ -->
+<div class="svc-slide" data-index="0">
+<div class="grid grid-cols-1 lg:grid-cols-2">
+<div class="relative h-72 lg:h-auto min-h-[500px]">
+<img alt="Wedding baraat car Muzaffarpur — decorated sedan SUV SadakYatra" class="absolute inset-0 w-full h-full object-cover" src="https://plain-apac-prod-public.komododecks.com/202604/12/JWeiW7AVXRKXYa5vUYy5/image.jpg"/>
+<div class="absolute inset-0" style="background:linear-gradient(to right,rgba(26,26,26,0) 35%,#1a1a1a 100%),linear-gradient(to top,rgba(26,26,26,.8) 0%,transparent 55%)"></div>
+<div class="absolute top-6 left-6 flex gap-2">
+<span data-svc-title="" class="bg-brand-yellow text-brand-black text-xs font-extrabold px-3 py-1.5 rounded-full flex items-center gap-1.5">
+<i class="ri-heart-fill text-xs"></i> Wedding Cars
+                </span>
+</div>
+<div class="absolute bottom-6 left-6 flex gap-3">
+<div class="bg-black/60 backdrop-blur-sm rounded-2xl px-4 py-3 border border-white/10 text-center">
+<div class="text-xl font-extrabold text-brand-yellow">200+</div>
+<div class="text-xs text-gray-400 font-bold">Weddings</div>
+</div>
+<div class="bg-black/60 backdrop-blur-sm rounded-2xl px-4 py-3 border border-white/10 text-center">
+<div class="text-xl font-extrabold text-brand-yellow">4.9★</div>
+<div class="text-xs text-gray-400 font-bold">Rated</div>
+</div>
+</div>
+</div>
+<div class="p-8 sm:p-10 lg:p-14 flex flex-col justify-center text-white">
+<p class="text-brand-yellow text-xs font-bold uppercase tracking-widest mb-3">Wedding · Baraat · Bidai · Reception</p>
+<h3 class="text-3xl lg:text-4xl font-extrabold mb-3 leading-tight">
+                Make Your <span class="text-brand-yellow">Baraat Entry</span> Unforgettable.
+              </h3>
+<p class="text-gray-400 text-sm leading-relaxed mb-6">Fully decorated luxury sedans and SUVs with fresh floral arrangements, uniformed chauffeur. Muzaffarpur ka #1 wedding car service.</p>
+<div class="grid grid-cols-2 gap-3 mb-6">
+<div class="flex items-center gap-2 bg-white/5 rounded-xl p-3 border border-white/8">
+<i class="ri-leaf-line text-brand-yellow flex-shrink-0"></i>
+<span class="text-xs font-bold text-gray-200">Fresh Floral Decor</span>
+</div>
+<div class="flex items-center gap-2 bg-white/5 rounded-xl p-3 border border-white/8">
+<i class="ri-user-star-line text-brand-yellow flex-shrink-0"></i>
+<span class="text-xs font-bold text-gray-200">Uniformed Chauffeur</span>
+</div>
+<div class="flex items-center gap-2 bg-white/5 rounded-xl p-3 border border-white/8">
+<i class="ri-time-line text-brand-yellow flex-shrink-0"></i>
+<span class="text-xs font-bold text-gray-200">8 Hours / 150km</span>
+</div>
+<div class="flex items-center gap-2 bg-white/5 rounded-xl p-3 border border-white/8">
+<i class="ri-vip-diamond-line text-brand-yellow flex-shrink-0"></i>
+<span class="text-xs font-bold text-gray-200">Sedan to Fortuner</span>
+</div>
+</div>
+<div class="flex items-baseline gap-3 mb-7">
+<span class="text-4xl font-extrabold text-brand-yellow">₹4,500</span>
+<span class="text-gray-400 text-sm">Sedan · All inclusive</span>
+</div>
+<div class="flex gap-3">
+<a class="flex-1 flex items-center justify-center gap-2 py-3.5 bg-brand-yellow text-brand-black font-bold rounded-xl hover:bg-yellow-400 transition-all text-sm" href="https://wa.me/919304057169?text=Hi%20SadakYatra!%20Mujhe%20wedding%20baraat%20car%20book%20karni%20hai.%20Please%20packages%20share%20karo." rel="noopener" target="_blank">
+<i class="ri-whatsapp-line"></i> Book Wedding Car
+                </a>
+<a class="flex items-center justify-center px-5 py-3.5 bg-white/8 border border-white/15 text-white font-bold rounded-xl hover:bg-white/15 transition-all text-sm" href="/baraat-car-muzaffarpur.html">
+                  Details
+                </a>
+</div>
+</div>
+</div>
+</div>
+<!-- ═══ SLIDE 2: Muzaffarpur to Patna ═══ -->
+<div class="svc-slide hidden" data-index="1">
+<div class="grid grid-cols-1 lg:grid-cols-2">
+<div class="relative h-72 lg:h-auto min-h-[500px]">
+<img alt="Muzaffarpur to Patna cab taxi — SadakYatra outstation" class="absolute inset-0 w-full h-full object-cover" src="https://images.unsplash.com/photo-1663852397535-18292e115327?q=80&amp;w=1160&amp;auto=format&amp;fit=crop&amp;ixlib=rb-4.1.0&amp;ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D"/>
+<div class="absolute inset-0" style="background:linear-gradient(to right,rgba(26,26,26,0) 35%,#1a1a1a 100%),linear-gradient(to top,rgba(26,26,26,.8) 0%,transparent 55%)"></div>
+<div class="absolute top-6 left-6">
+<span data-svc-title="" class="bg-brand-yellow text-brand-black text-xs font-extrabold px-3 py-1.5 rounded-full flex items-center gap-1.5">
+<i class="ri-route-line text-xs"></i> Outstation Cab
+                </span>
+</div>
+<div class="absolute bottom-6 left-6 flex gap-3">
+<div class="bg-black/60 backdrop-blur-sm rounded-2xl px-4 py-3 border border-white/10 text-center">
+<div class="text-xl font-extrabold text-brand-yellow">80 km</div>
+<div class="text-xs text-gray-400 font-bold">Distance</div>
+</div>
+<div class="bg-black/60 backdrop-blur-sm rounded-2xl px-4 py-3 border border-white/10 text-center">
+<div class="text-xl font-extrabold text-brand-yellow">~2 hrs</div>
+<div class="text-xs text-gray-400 font-bold">Journey</div>
+</div>
+</div>
+</div>
+<div class="p-8 sm:p-10 lg:p-14 flex flex-col justify-center text-white">
+<p class="text-brand-yellow text-xs font-bold uppercase tracking-widest mb-3">Muzaffarpur to Patna · Patna to Muzaffarpur</p>
+<h3 class="text-3xl lg:text-4xl font-extrabold mb-3 leading-tight">
+                Muzaffarpur ↔ Patna Cab — <span class="text-brand-yellow">₹1,699 One Way</span>
+</h3>
+<p class="text-gray-400 text-sm leading-relaxed mb-6">Bihar's most travelled route — fixed fare, door-to-door pickup, AC cab. NH-27 via Hajipur — fastest route, on-time every time.</p>
+<div class="grid grid-cols-2 gap-3 mb-6">
+<div class="flex items-center gap-2 bg-white/5 rounded-xl p-3 border border-white/8">
+<i class="ri-map-pin-2-line text-brand-yellow flex-shrink-0"></i>
+<span class="text-xs font-bold text-gray-200">Door-to-Door</span>
+</div>
+<div class="flex items-center gap-2 bg-white/5 rounded-xl p-3 border border-white/8">
+<i class="ri-money-dollar-circle-line text-brand-yellow flex-shrink-0"></i>
+<span class="text-xs font-bold text-gray-200">No Hidden Charges</span>
+</div>
+<div class="flex items-center gap-2 bg-white/5 rounded-xl p-3 border border-white/8">
+<i class="ri-snowflake-line text-brand-yellow flex-shrink-0"></i>
+<span class="text-xs font-bold text-gray-200">Clean AC Cab</span>
+</div>
+<div class="flex items-center gap-2 bg-white/5 rounded-xl p-3 border border-white/8">
+<i class="ri-arrow-left-right-line text-brand-yellow flex-shrink-0"></i>
+<span class="text-xs font-bold text-gray-200">One Way &amp; Round Trip</span>
+</div>
+</div>
+<div class="flex items-baseline gap-3 mb-7">
+<span class="text-4xl font-extrabold text-brand-yellow">₹1,699</span>
+<span class="text-gray-400 text-sm">One way Sedan · RT ₹2,999</span>
+</div>
+<div class="flex gap-3">
+<a class="flex-1 flex items-center justify-center gap-2 py-3.5 bg-brand-yellow text-brand-black font-bold rounded-xl hover:bg-yellow-400 transition-all text-sm" href="https://wa.me/919304057169?text=Hi%20SadakYatra!%20I%20need%20a%20cab%20from%20Muzaffarpur%20to%20Patna.%20Please%20confirm%20availability%20and%20fare." rel="noopener" target="_blank">
+<i class="ri-whatsapp-line"></i> Book Patna Cab
+                </a>
+<a class="flex items-center justify-center px-5 py-3.5 bg-white/8 border border-white/15 text-white font-bold rounded-xl hover:bg-white/15 transition-all text-sm" href="/muzaffarpur-to-patna-cab.html">
+                  Details
+                </a>
+</div>
+</div>
+</div>
+</div>
+<!-- ═══ SLIDE 3: Airport Transfers ═══ -->
+<div class="svc-slide hidden" data-index="2">
+<div class="grid grid-cols-1 lg:grid-cols-2">
+<div class="relative h-72 lg:h-auto min-h-[500px]">
+<img alt="Muzaffarpur Patna airport cab taxi — Darbhanga airport transfer SadakYatra" class="absolute inset-0 w-full h-full object-cover" src="https://images.unsplash.com/photo-1436491865332-7a61a109cc05?auto=format&amp;fit=crop&amp;w=1200&amp;q=80"/>
+<div class="absolute inset-0" style="background:linear-gradient(to right,rgba(26,26,26,0) 35%,#1a1a1a 100%),linear-gradient(to top,rgba(26,26,26,.8) 0%,transparent 55%)"></div>
+<div class="absolute top-6 left-6">
+<span data-svc-title="" class="bg-brand-yellow text-brand-black text-xs font-extrabold px-3 py-1.5 rounded-full flex items-center gap-1.5">
+<i class="ri-plane-line text-xs"></i> Airport Transfer
+                </span>
+</div>
+<div class="absolute bottom-6 left-6 flex gap-3">
+<div class="bg-black/60 backdrop-blur-sm rounded-2xl px-4 py-3 border border-white/10 text-center">
+<div class="text-xl font-extrabold text-brand-yellow">24×7</div>
+<div class="text-xs text-gray-400 font-bold">Available</div>
+</div>
+<div class="bg-black/60 backdrop-blur-sm rounded-2xl px-4 py-3 border border-white/10 text-center">
+<div class="text-xl font-extrabold text-brand-yellow">On Time</div>
+<div class="text-xs text-gray-400 font-bold">Guaranteed</div>
+</div>
+</div>
+</div>
+<div class="p-8 sm:p-10 lg:p-14 flex flex-col justify-center text-white">
+<p class="text-brand-yellow text-xs font-bold uppercase tracking-widest mb-3">Patna Airport · Darbhanga Airport · 24×7</p>
+<h3 class="text-3xl lg:text-4xl font-extrabold mb-3 leading-tight">
+                Airport Cab — <span class="text-brand-yellow">Never Miss a Flight.</span>
+</h3>
+<p class="text-gray-400 text-sm leading-relaxed mb-6">Muzaffarpur se Patna Airport (PAT) aur Darbhanga Airport (DBR) — flight tracking, on-time pickup, zero waiting. Early morning special available.</p>
+<div class="grid grid-cols-2 gap-3 mb-6">
+<div class="flex items-center gap-2 bg-white/5 rounded-xl p-3 border border-white/8">
+<i class="ri-flight-takeoff-line text-brand-yellow flex-shrink-0"></i>
+<span class="text-xs font-bold text-gray-200">Flight Tracking</span>
+</div>
+<div class="flex items-center gap-2 bg-white/5 rounded-xl p-3 border border-white/8">
+<i class="ri-time-line text-brand-yellow flex-shrink-0"></i>
+<span class="text-xs font-bold text-gray-200">On-Time Guarantee</span>
+</div>
+<div class="flex items-center gap-2 bg-white/5 rounded-xl p-3 border border-white/8">
+<i class="ri-moon-line text-brand-yellow flex-shrink-0"></i>
+<span class="text-xs font-bold text-gray-200">Early Morning Pickup</span>
+</div>
+<div class="flex items-center gap-2 bg-white/5 rounded-xl p-3 border border-white/8">
+<i class="ri-map-pin-2-line text-brand-yellow flex-shrink-0"></i>
+<span class="text-xs font-bold text-gray-200">Both Airports Covered</span>
+</div>
+</div>
+<div class="flex items-baseline gap-3 mb-7">
+<span class="text-4xl font-extrabold text-brand-yellow">₹1,699</span>
+<span class="text-gray-400 text-sm">Patna Airport · Sedan</span>
+</div>
+<div class="flex gap-3">
+<a class="flex-1 flex items-center justify-center gap-2 py-3.5 bg-brand-yellow text-brand-black font-bold rounded-xl hover:bg-yellow-400 transition-all text-sm" href="https://wa.me/919304057169?text=Hi%20SadakYatra!%20I%20need%20an%20airport%20cab.%20Please%20confirm%20availability%20and%20fare." rel="noopener" target="_blank">
+<i class="ri-whatsapp-line"></i> Book Airport Cab
+                </a>
+<a class="flex items-center justify-center px-5 py-3.5 bg-white/8 border border-white/15 text-white font-bold rounded-xl hover:bg-white/15 transition-all text-sm" href="/muzaffarpur-patna-airport-cab.html">
+                  Details
+                </a>
+</div>
+</div>
+</div>
+</div>
+<!-- ═══ SLIDE 4: Tempo Traveller ═══ -->
+<div class="svc-slide hidden" data-index="3">
+<div class="grid grid-cols-1 lg:grid-cols-2">
+<div class="relative h-72 lg:h-auto min-h-[500px]">
+<img alt="Tempo traveller hire Muzaffarpur — group travel Bihar SadakYatra" class="absolute inset-0 w-full h-full object-cover object-center" src="/tempo-traveller-raaz-20260920.jpg"/>
+<div class="absolute inset-0" style="background:linear-gradient(to right,rgba(26,26,26,0) 35%,#1a1a1a 100%),linear-gradient(to top,rgba(26,26,26,.8) 0%,transparent 55%)"></div>
+<div class="absolute top-6 left-6">
+<span data-svc-title="" class="bg-brand-yellow text-brand-black text-xs font-extrabold px-3 py-1.5 rounded-full flex items-center gap-1.5">
+<i class="ri-bus-line text-xs"></i> Tempo Traveller
+                </span>
+</div>
+<div class="absolute bottom-6 left-6 flex gap-3">
+<div class="bg-black/60 backdrop-blur-sm rounded-2xl px-4 py-3 border border-white/10 text-center">
+<div class="text-xl font-extrabold text-brand-yellow">12–26</div>
+<div class="text-xs text-gray-400 font-bold">Seater</div>
+</div>
+<div class="bg-black/60 backdrop-blur-sm rounded-2xl px-4 py-3 border border-white/10 text-center">
+<div class="text-xl font-extrabold text-brand-yellow">AC</div>
+<div class="text-xs text-gray-400 font-bold">Pushback</div>
+</div>
+</div>
+</div>
+<div class="p-8 sm:p-10 lg:p-14 flex flex-col justify-center text-white">
+<p class="text-brand-yellow text-xs font-bold uppercase tracking-widest mb-3">Group Travel · Baraat · Pilgrimage · Tours</p>
+<h3 class="text-3xl lg:text-4xl font-extrabold mb-3 leading-tight">
+                Tempo Traveller Hire — <span class="text-brand-yellow">₹25/km Muzaffarpur</span>
+</h3>
+<p class="text-gray-400 text-sm leading-relaxed mb-6">Family trips, pilgrimage to Vaishali-Gaya-Bodh Gaya, baraat groups, corporate outings — 12 to 26 seater AC tempo with pushback seats.</p>
+<div class="grid grid-cols-2 gap-3 mb-6">
+<div class="flex items-center gap-2 bg-white/5 rounded-xl p-3 border border-white/8">
+<i class="ri-group-2-line text-brand-yellow flex-shrink-0"></i>
+<span class="text-xs font-bold text-gray-200">12–26 Seater</span>
+</div>
+<div class="flex items-center gap-2 bg-white/5 rounded-xl p-3 border border-white/8">
+<i class="ri-sofa-line text-brand-yellow flex-shrink-0"></i>
+<span class="text-xs font-bold text-gray-200">Pushback Seats</span>
+</div>
+<div class="flex items-center gap-2 bg-white/5 rounded-xl p-3 border border-white/8">
+<i class="ri-road-map-line text-brand-yellow flex-shrink-0"></i>
+<span class="text-xs font-bold text-gray-200">All Bihar Routes</span>
+</div>
+<div class="flex items-center gap-2 bg-white/5 rounded-xl p-3 border border-white/8">
+<i class="ri-user-2-line text-brand-yellow flex-shrink-0"></i>
+<span class="text-xs font-bold text-gray-200">Dual Drivers Long Route</span>
+</div>
+</div>
+<div class="flex items-baseline gap-3 mb-7">
+<span class="text-4xl font-extrabold text-brand-yellow">₹25/km</span>
+<span class="text-gray-400 text-sm">12 Seater · Min 100km</span>
+</div>
+<div class="flex gap-3">
+<a class="flex-1 flex items-center justify-center gap-2 py-3.5 bg-brand-yellow text-brand-black font-bold rounded-xl hover:bg-yellow-400 transition-all text-sm" href="https://wa.me/919304057169?text=Hi%20SadakYatra!%20I%20need%20a%20tempo%20traveller%20in%20Muzaffarpur.%20Please%20share%20details%20and%20availability." rel="noopener" target="_blank">
+<i class="ri-whatsapp-line"></i> Book Tempo Traveller
+                </a>
+<a class="flex items-center justify-center px-5 py-3.5 bg-white/8 border border-white/15 text-white font-bold rounded-xl hover:bg-white/15 transition-all text-sm" href="/tempo-traveller-muzaffarpur.html">
+                  Details
+                </a>
+</div>
+</div>
+</div>
+</div>
+<!-- ═══ SLIDE 5: Local & Outstation ═══ -->
+<div class="svc-slide hidden" data-index="4">
+<div class="grid grid-cols-1 lg:grid-cols-2">
+<div class="relative h-72 lg:h-auto min-h-[500px]">
+<img alt="Cab service Muzaffarpur local taxi booking SadakYatra" class="absolute inset-0 w-full h-full object-cover" src="https://images.unsplash.com/photo-1449965408869-eaa3f722e40d?auto=format&amp;fit=crop&amp;w=1200&amp;q=80"/>
+<div class="absolute inset-0" style="background:linear-gradient(to right,rgba(26,26,26,0) 35%,#1a1a1a 100%),linear-gradient(to top,rgba(26,26,26,.8) 0%,transparent 55%)"></div>
+<div class="absolute top-6 left-6">
+<span data-svc-title="" class="bg-brand-yellow text-brand-black text-xs font-extrabold px-3 py-1.5 rounded-full flex items-center gap-1.5">
+<i class="ri-map-pin-line text-xs"></i> Local &amp; Outstation
+                </span>
+</div>
+<div class="absolute bottom-6 left-6 flex gap-3">
+<div class="bg-black/60 backdrop-blur-sm rounded-2xl px-4 py-3 border border-white/10 text-center">
+<div class="text-xl font-extrabold text-brand-yellow">All</div>
+<div class="text-xs text-gray-400 font-bold">Routes</div>
+</div>
+<div class="bg-black/60 backdrop-blur-sm rounded-2xl px-4 py-3 border border-white/10 text-center">
+<div class="text-xl font-extrabold text-brand-yellow">Bihar</div>
+<div class="text-xs text-gray-400 font-bold">Wide</div>
+</div>
+</div>
+</div>
+<div class="p-8 sm:p-10 lg:p-14 flex flex-col justify-center text-white">
+<p class="text-brand-yellow text-xs font-bold uppercase tracking-widest mb-3">Cab Service Muzaffarpur · Taxi Booking · All Routes</p>
+<h3 class="text-3xl lg:text-4xl font-extrabold mb-3 leading-tight">
+                Local City Cab &amp; <span class="text-brand-yellow">Outstation Taxi</span> — All Routes.
+              </h3>
+<p class="text-gray-400 text-sm leading-relaxed mb-6">Muzaffarpur to Darbhanga, Sitamarhi, Motihari, Samastipur, Patna — sab routes cover. Local city rides bhi available. Instant taxi booking on WhatsApp.</p>
+<div class="grid grid-cols-2 gap-3 mb-6">
+<div class="flex items-center gap-2 bg-white/5 rounded-xl p-3 border border-white/8">
+<i class="ri-route-line text-brand-yellow flex-shrink-0"></i>
+<span class="text-xs font-bold text-gray-200">→ Darbhanga ₹1,699</span>
+</div>
+<div class="flex items-center gap-2 bg-white/5 rounded-xl p-3 border border-white/8">
+<i class="ri-route-line text-brand-yellow flex-shrink-0"></i>
+<span class="text-xs font-bold text-gray-200">→ Sitamarhi ₹1,699</span>
+</div>
+<div class="flex items-center gap-2 bg-white/5 rounded-xl p-3 border border-white/8">
+<i class="ri-route-line text-brand-yellow flex-shrink-0"></i>
+<span class="text-xs font-bold text-gray-200">→ Motihari ₹1,999</span>
+</div>
+<div class="flex items-center gap-2 bg-white/5 rounded-xl p-3 border border-white/8">
+<i class="ri-route-line text-brand-yellow flex-shrink-0"></i>
+<span class="text-xs font-bold text-gray-200">→ Samastipur ₹1,700</span>
+</div>
+</div>
+<div class="flex items-baseline gap-3 mb-7">
+<span class="text-4xl font-extrabold text-brand-yellow">₹1,699</span>
+<span class="text-gray-400 text-sm">Outstation Sedan · One Way</span>
+</div>
+<div class="flex gap-3">
+<a class="flex-1 flex items-center justify-center gap-2 py-3.5 bg-brand-yellow text-brand-black font-bold rounded-xl hover:bg-yellow-400 transition-all text-sm" href="https://wa.me/919304057169?text=Hi%20SadakYatra!%20I%20need%20a%20cab%20in%20Muzaffarpur.%20Please%20confirm%20route%20and%20fare." rel="noopener" target="_blank">
+<i class="ri-whatsapp-line"></i> Book Cab Now
+                </a>
+<a class="flex items-center justify-center px-5 py-3.5 bg-white/8 border border-white/15 text-white font-bold rounded-xl hover:bg-white/15 transition-all text-sm" href="/cab-service-muzaffarpur.html">
+                  All Routes
+                </a>
+</div>
+</div>
+</div>
+</div>
+</div><!-- /svc-slider -->
+
+<div class="relative z-20 border-t border-white/8 bg-brand-black/40 backdrop-blur-sm">
+<!-- Service Tab Pills -->
+<div class="flex overflow-x-auto scrollbar-hide px-4 lg:px-8 py-3 gap-2 border-b border-white/5">
+<button class="svc-pill flex-shrink-0 flex items-center gap-1.5 px-4 py-2 rounded-full text-xs font-bold transition-all bg-brand-yellow text-brand-black" data-svc="0" onclick="svcGo(0)">
+<i class="ri-heart-line"></i> Wedding
+          </button>
+<button class="svc-pill flex-shrink-0 flex items-center gap-1.5 px-4 py-2 rounded-full text-xs font-bold transition-all bg-white/8 text-gray-300 border border-white/10 hover:border-brand-yellow/50" data-svc="1" onclick="svcGo(1)">
+<i class="ri-route-line"></i> Patna Cab
+          </button>
+<button class="svc-pill flex-shrink-0 flex items-center gap-1.5 px-4 py-2 rounded-full text-xs font-bold transition-all bg-white/8 text-gray-300 border border-white/10 hover:border-brand-yellow/50" data-svc="2" onclick="svcGo(2)">
+<i class="ri-plane-line"></i> Airport
+          </button>
+<button class="svc-pill flex-shrink-0 flex items-center gap-1.5 px-4 py-2 rounded-full text-xs font-bold transition-all bg-white/8 text-gray-300 border border-white/10 hover:border-brand-yellow/50" data-svc="3" onclick="svcGo(3)">
+<i class="ri-bus-line"></i> Tempo Traveller
+          </button>
+<button class="svc-pill flex-shrink-0 flex items-center gap-1.5 px-4 py-2 rounded-full text-xs font-bold transition-all bg-white/8 text-gray-300 border border-white/10 hover:border-brand-yellow/50" data-svc="4" onclick="svcGo(4)">
+<i class="ri-map-pin-line"></i> Local &amp; Outstation
+          </button>
+</div>
+<!-- Prev / Next -->
+<div class="flex items-center justify-between px-6 lg:px-8 py-4">
+<span class="text-xs text-gray-400 font-bold" id="svc-label">1 / 5 — Wedding &amp; Baraat Cars</span>
+<div class="flex gap-2">
+<button class="w-10 h-10 rounded-xl bg-white/8 border border-white/10 flex items-center justify-center hover:bg-brand-yellow hover:border-brand-yellow hover:text-brand-black text-white transition-all" onclick="svcPrev()">
+<i class="ri-arrow-left-s-line text-lg"></i>
+</button>
+<button class="w-10 h-10 rounded-xl bg-white/8 border border-white/10 flex items-center justify-center hover:bg-brand-yellow hover:border-brand-yellow hover:text-brand-black text-white transition-all" onclick="svcNext()">
+<i class="ri-arrow-right-s-line text-lg"></i>
+</button>
+</div>
+</div>
+</div>
+</div>
+</div>
+</section>
+
+<section aria-label="Cab fare estimator Muzaffarpur" class="py-14 bg-brand-gray reveal" id="fare-calculator">
+<div class="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8">
+<div class="text-center mb-8">
+<span class="inline-flex items-center gap-1.5 text-xs font-bold uppercase tracking-widest text-brand-yellow bg-yellow-50 border border-yellow-100 px-3 py-1.5 rounded-full mb-3">
+<i class="ri-calculator-line"></i> Instant Pricing
+      </span>
+<h2 class="text-3xl lg:text-4xl font-extrabold mb-3">Quick Fare Estimator</h2>
+<p class="text-gray-500 font-medium text-sm">Select your route and get an instant fare estimate. No registration needed.</p>
+</div>
+<div class="bg-white rounded-2xl shadow-lg border border-brand-borderGray p-8 lg:p-10 text-brand-black">
+<!-- Trip Type Toggle -->
+<div class="flex gap-2 mb-6 p-1 bg-gray-100 rounded-xl max-w-xs">
+<button class="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-xs font-bold transition-all bg-brand-yellow text-brand-black shadow-sm" id="calc-oneway-btn" onclick="setCalcTripType('oneway')">
+<i class="ri-arrow-right-line"></i> One Way
+        </button>
+<button class="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-xs font-bold transition-all text-gray-500" id="calc-roundtrip-btn" onclick="setCalcTripType('roundtrip')">
+<i class="ri-arrow-left-right-line"></i> Round Trip
+        </button>
+</div>
+<div class="flex flex-col md:flex-row gap-4 items-end mb-6">
+<div class="w-full md:flex-1">
+<label class="block text-xs font-bold text-gray-500 uppercase mb-2">
+<i class="ri-map-pin-2-line mr-1 text-brand-yellow"></i>Origin / From
+          </label>
+<select class="w-full px-4 py-3.5 rounded-xl border border-gray-200 bg-white text-sm font-bold" id="originInput">
+<option value="">Select Origin</option>
+<option value="Muzaffarpur">Muzaffarpur</option>
+<option value="Patna">Patna</option>
+<option value="Darbhanga">Darbhanga</option>
+<option value="Sitamarhi">Sitamarhi</option>
+<option value="Motihari">Motihari</option>
+<option value="Samastipur">Samastipur</option>
+</select>
+</div>
+<div class="hidden md:flex items-center justify-center pb-1.5">
+<button aria-label="Swap origin and destination" class="w-10 h-10 rounded-full bg-brand-yellow flex items-center justify-center hover:scale-110 transition-transform" onclick="swapCities()">
+<i class="ri-arrow-left-right-line text-brand-black font-bold"></i>
+</button>
+</div>
+<div class="w-full md:flex-1">
+<label class="block text-xs font-bold text-gray-500 uppercase mb-2">
+<i class="ri-map-pin-line mr-1 text-brand-yellow"></i>Destination / To
+          </label>
+<select class="w-full px-4 py-3.5 rounded-xl border border-gray-200 bg-white text-sm font-bold" id="dropInput">
+<option value="">Select Destination</option>
+<option value="Muzaffarpur">Muzaffarpur</option>
+<option value="Patna">Patna</option>
+<option value="Darbhanga">Darbhanga</option>
+<option value="Sitamarhi">Sitamarhi</option>
+<option value="Motihari">Motihari</option>
+<option value="Samastipur">Samastipur</option>
+<option value="Raxual">Raxual</option>
+</select>
+</div>
+<div class="w-full md:w-auto">
+<button class="w-full md:w-auto flex items-center justify-center gap-2 px-8 py-3.5 bg-brand-black text-brand-yellow font-bold rounded-xl hover:bg-gray-800 transition-all text-sm" onclick="calculateFare()">
+<i class="ri-search-line"></i> Check Fare
+          </button>
+</div>
+</div>
+<div class="hidden border-t border-gray-100 pt-6" id="fareResult">
+<p class="text-sm font-bold text-gray-500 mb-5 flex items-center gap-2">
+<i class="ri-route-line text-brand-yellow text-base"></i>
+          Estimated fares: <strong class="text-brand-black ml-1" id="resOrigin"></strong>
+<i class="ri-arrow-right-line text-gray-400"></i>
+<strong class="text-brand-black" id="resDrop"></strong>
+</p>
+<div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+<div class="border-2 border-brand-borderGray rounded-xl p-5 text-center transition-all duration-300 hover:border-brand-yellow group" id="fare-card-ow-sedan">
+<p class="text-xs text-gray-400 uppercase font-bold mb-2 flex items-center justify-center gap-1">
+<i class="ri-arrow-right-line"></i> One Way · Sedan
+            </p>
+<p class="text-3xl font-black">₹<span id="p1"></span></p>
+<p class="text-xs font-medium text-gray-400 mt-1">Amaze / Swift Dzire</p>
+</div>
+<div class="border-2 border-brand-yellow rounded-xl p-5 text-center bg-yellow-50 relative transition-all duration-300" id="fare-card-rt-sedan">
+<span class="absolute -top-3.5 left-1/2 -translate-x-1/2 bg-brand-yellow text-brand-black text-xs font-bold px-3 py-1 rounded-full">BEST VALUE</span>
+<p class="text-xs text-gray-500 uppercase font-bold mb-2 flex items-center justify-center gap-1">
+<i class="ri-arrow-left-right-line"></i> Round Trip · Sedan
+            </p>
+<p class="text-3xl font-black">₹<span id="p2"></span></p>
+<p class="text-xs font-medium text-gray-400 mt-1">Save vs two one-ways</p>
+</div>
+<div class="border-2 border-brand-borderGray rounded-xl p-5 text-center transition-all duration-300 hover:border-brand-yellow" id="fare-card-ow-suv">
+<p class="text-xs text-gray-400 uppercase font-bold mb-2 flex items-center justify-center gap-1">
+<i class="ri-arrow-right-line"></i> One Way · SUV
+            </p>
+<p class="text-3xl font-black">₹<span id="p3"></span></p>
+<p class="text-xs font-medium text-gray-400 mt-1">Innova / Ertiga / Scorpio</p>
+</div>
+</div>
+<a class="flex items-center justify-center gap-2 w-full py-4 bg-[#25D366] text-white font-bold rounded-xl hover:bg-[#20BA5A] transition-all text-base shadow-md" href="#" id="resWA" rel="noopener" target="_blank">
+<i class="ri-whatsapp-line text-xl"></i> Book This Cab on WhatsApp
+        </a>
+<p class="text-center font-medium text-xs text-gray-400 mt-3">
+<i class="ri-information-line text-gray-400 mr-1"></i>Fares include driver allowance. Tolls &amp; state taxes disclosed before booking.
+        </p>
+</div>
+</div>
+</div>
+</section>
+<section aria-label="Popular cab routes from Muzaffarpur" class="py-20 bg-white reveal">
+<div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+<div class="text-center mb-8">
+<h2 class="text-3xl font-extrabold mb-3">Popular Cab Routes from Muzaffarpur</h2>
+<p class="text-gray-500 font-medium text-sm">Fixed fares · No surge · Same driver both ways</p>
+</div>
+<div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+<a class="route-card bg-brand-gray rounded-xl p-4 text-center border border-brand-borderGray group cursor-pointer" href="/muzaffarpur-to-patna-cab.html">
+<i class="ri-route-line text-brand-yellow text-xl mb-2 block"></i>
+<p class="font-bold text-xs group-hover:text-brand-yellow transition-colors leading-tight text-brand-black">Muzaffarpur<br/>→ Patna</p>
+<p class="text-xs font-bold text-gray-400 mt-1.5">From ₹1,699</p>
+</a>
+<a class="route-card bg-brand-gray rounded-xl p-4 text-center border border-brand-borderGray group cursor-pointer" href="/muzaffarpur-to-patna-cab.html">
+<i class="ri-route-line text-brand-yellow text-xl mb-2 block"></i>
+<p class="font-bold text-xs group-hover:text-brand-yellow transition-colors leading-tight text-brand-black">Muzaffarpur<br/>→ Darbhanga</p>
+<p class="text-xs font-bold text-gray-400 mt-1.5">From ₹1,699</p>
+</a>
+<a class="route-card bg-brand-gray rounded-xl p-4 text-center border border-brand-borderGray group cursor-pointer" href="/darbhanga-airport-cab-muzaffarpur.html">
+<i class="ri-plane-line text-brand-yellow text-xl mb-2 block"></i>
+<p class="font-bold text-xs group-hover:text-brand-yellow transition-colors leading-tight text-brand-black">Muzaffarpur<br/>→ Airport</p>
+<p class="text-xs font-bold text-gray-400 mt-1.5">From ₹1,699</p>
+</a>
+<a class="route-card bg-brand-gray rounded-xl p-4 text-center border border-brand-borderGray group cursor-pointer" href="https://wa.me/919304057169?text=Hi!%20I%20need%20a%20cab%20from%20Muzaffarpur%20to%20Sitamarhi.%20Please%20share%20fare." rel="noopener" target="_blank">
+<i class="ri-route-line text-brand-yellow text-xl mb-2 block"></i>
+<p class="font-bold text-xs group-hover:text-brand-yellow transition-colors leading-tight text-brand-black">Muzaffarpur<br/>→ Sitamarhi</p>
+<p class="text-xs font-bold text-gray-400 mt-1.5">From ₹1,699</p>
+</a>
+<a class="route-card bg-brand-gray rounded-xl p-4 text-center border border-brand-borderGray group cursor-pointer" href="https://wa.me/919304057169?text=Hi!%20I%20need%20a%20cab%20from%20Muzaffarpur%20to%20Motihari.%20Please%20share%20fare." rel="noopener" target="_blank">
+<i class="ri-route-line text-brand-yellow text-xl mb-2 block"></i>
+<p class="font-bold text-xs group-hover:text-brand-yellow transition-colors leading-tight text-brand-black">Muzaffarpur<br/>→ Motihari</p>
+<p class="text-xs font-bold text-gray-400 mt-1.5">From ₹1,999</p>
+</a>
+<a class="route-card bg-brand-gray rounded-xl p-4 text-center border border-brand-borderGray group cursor-pointer" href="https://wa.me/919304057169?text=Hi!%20I%20need%20a%20cab%20from%20Muzaffarpur%20to%20Raxual.%20Please%20share%20fare." rel="noopener" target="_blank">
+<i class="ri-route-line text-brand-yellow text-xl mb-2 block"></i>
+<p class="font-bold text-xs group-hover:text-brand-yellow transition-colors leading-tight text-brand-black">Muzaffarpur<br/>→ Raxual</p>
+<p class="text-xs font-bold text-gray-400 mt-1.5">From ₹2,699</p>
+</a>
+</div>
+</div>
+</section>
+<section aria-label="SadakYatra cab partner desk for Muzaffarpur businesses" class="py-14 bg-brand-black text-white reveal">
+<div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+<div class="grid lg:grid-cols-[1.05fr_1.4fr] gap-8 items-center">
+<div>
+<span class="inline-flex items-center gap-1.5 text-xs font-bold uppercase tracking-widest text-brand-yellow bg-white/5 border border-white/10 px-3 py-1.5 rounded-full mb-4">
+<i class="ri-handshake-line"></i> Referral Desk
+        </span>
+<h2 class="text-3xl lg:text-4xl font-extrabold mb-4">Cab support for hotels, banquets, hostels and hospitals.</h2>
+<p class="text-gray-300 font-medium leading-relaxed mb-6">
+          Guest pickup, wedding family transfer, student-parent travel, SKMCH/city hospital trips, Patna Airport and Darbhanga Airport drops from one Muzaffarpur team.
+        </p>
+<a class="inline-flex items-center gap-2 px-7 py-3.5 bg-brand-yellow text-brand-black font-bold rounded-xl hover:bg-yellow-400 transition-all shadow-lg" href="https://wa.me/919304057169?text=Hi%20SadakYatra!%20We%20need%20cab%20support%20for%20our%20guests%2Fcustomers%20in%20Muzaffarpur." rel="noopener" target="_blank">
+<i class="ri-whatsapp-line text-lg"></i> Start Partner Booking
+        </a>
+</div>
+<div class="grid sm:grid-cols-2 gap-4">
+<div class="feat-card">
+<i class="ri-hotel-line text-brand-yellow text-2xl mb-3 block"></i>
+<h3 class="font-bold mb-1">Hotel Front Desks</h3>
+<p class="text-sm text-gray-400">Railway station, bus stand and airport cab requests for guests.</p>
+</div>
+<div class="feat-card">
+<i class="ri-heart-2-line text-brand-yellow text-2xl mb-3 block"></i>
+<h3 class="font-bold mb-1">Banquet &amp; Wedding Teams</h3>
+<p class="text-sm text-gray-400">Baraat car, dulha gadi, family pickup and tempo traveller support.</p>
+</div>
+<div class="feat-card">
+<i class="ri-graduation-cap-line text-brand-yellow text-2xl mb-3 block"></i>
+<h3 class="font-bold mb-1">Coaching &amp; Hostels</h3>
+<p class="text-sm text-gray-400">Safe pickup-drop for students, parents and visiting families.</p>
+</div>
+<div class="feat-card">
+<i class="ri-hospital-line text-brand-yellow text-2xl mb-3 block"></i>
+<h3 class="font-bold mb-1">Hospitals &amp; Clinics</h3>
+<p class="text-sm text-gray-400">Patient attendants and urgent city/outstation travel support.</p>
+</div>
+</div>
+</div>
+</div>
+</section>
+<section aria-label="Customer reviews SadakYatra Muzaffarpur" class="py-14 bg-brand-gray reveal" id="reviews">
+<div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+<div class="text-center mb-8">
+<span class="inline-flex items-center gap-1.5 text-xs font-bold uppercase tracking-widest text-brand-yellow bg-yellow-50 border border-yellow-100 px-3 py-1.5 rounded-full mb-3">
+<i class="ri-star-line"></i> Customer Reviews
+      </span>
+<h2 class="text-3xl lg:text-4xl font-extrabold mb-4">What Muzaffarpur Says About Us</h2>
+<div class="flex items-center justify-center gap-3">
+<div class="flex">
+<i class="ri-star-fill text-brand-yellow text-2xl"></i>
+<i class="ri-star-fill text-brand-yellow text-2xl"></i>
+<i class="ri-star-fill text-brand-yellow text-2xl"></i>
+<i class="ri-star-fill text-brand-yellow text-2xl"></i>
+<i class="ri-star-fill text-brand-yellow text-2xl"></i>
+</div>
+<span class="text-2xl font-black text-brand-black">4.9/5</span>
+<span class="text-gray-500 font-bold text-sm">· 43+ customer reviews</span>
+</div>
+</div>
+<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6" id="reviews-grid">
+<div class="review-card bg-white rounded-2xl p-6 border border-brand-borderGray shadow-sm">
+<div class="skeleton h-4 w-24 rounded-full mb-4"></div><div class="skeleton h-3 w-full rounded mb-2"></div>
+<div class="skeleton h-3 w-full rounded mb-2"></div><div class="skeleton h-3 w-3/4 rounded mb-6"></div>
+<div class="border-t border-gray-100 pt-4 flex gap-3"><div class="skeleton w-9 h-9 rounded-full flex-shrink-0"></div>
+<div class="flex-1"><div class="skeleton h-3 w-28 rounded mb-2"></div><div class="skeleton h-2.5 w-36 rounded"></div></div></div>
+</div>
+<div class="review-card bg-brand-black rounded-2xl p-6 border border-gray-800 shadow-sm">
+<div class="skeleton-dark h-4 w-24 rounded-full mb-4"></div><div class="skeleton-dark h-3 w-full rounded mb-2"></div>
+<div class="skeleton-dark h-3 w-full rounded mb-2"></div><div class="skeleton-dark h-3 w-3/4 rounded mb-6"></div>
+<div class="border-t border-gray-700 pt-4 flex gap-3"><div class="skeleton-dark w-9 h-9 rounded-full flex-shrink-0"></div>
+<div class="flex-1"><div class="skeleton-dark h-3 w-28 rounded mb-2"></div><div class="skeleton-dark h-2.5 w-36 rounded"></div></div></div>
+</div>
+<div class="review-card bg-white rounded-2xl p-6 border border-brand-borderGray shadow-sm">
+<div class="skeleton h-4 w-24 rounded-full mb-4"></div><div class="skeleton h-3 w-full rounded mb-2"></div>
+<div class="skeleton h-3 w-full rounded mb-2"></div><div class="skeleton h-3 w-3/4 rounded mb-6"></div>
+<div class="border-t border-gray-100 pt-4 flex gap-3"><div class="skeleton w-9 h-9 rounded-full flex-shrink-0"></div>
+<div class="flex-1"><div class="skeleton h-3 w-28 rounded mb-2"></div><div class="skeleton h-2.5 w-36 rounded"></div></div></div>
+</div>
+</div>
+<div class="text-center mt-10">
+<a class="inline-flex items-center gap-2 px-6 py-3 border-2 border-brand-black font-bold rounded-xl text-sm text-brand-black hover:bg-brand-black hover:text-brand-yellow transition-all" href="https://g.page/r/sadakyatra" rel="noopener" target="_blank">
+<i class="ri-star-line text-brand-yellow"></i> Leave a Google Review
+      </a>
+</div>
+</div>
+</section>
+<section aria-label="Frequently asked questions SadakYatra" class="py-14 bg-white reveal" id="faq">
+<div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 text-brand-black">
+<div class="text-center mb-8">
+<h2 class="text-3xl lg:text-4xl font-extrabold mb-4">Frequently Asked Questions</h2>
+<div class="w-12 h-1 bg-brand-yellow mx-auto rounded-full"></div>
+</div>
+<div class="space-y-3">
+<details class="group bg-brand-gray border border-brand-borderGray rounded-xl hover:border-brand-yellow transition-colors [&amp;_summary::-webkit-details-marker]:hidden">
+<summary class="flex cursor-pointer items-center justify-between gap-4 p-6 font-bold">
+<span class="flex items-center gap-3 text-base">
+<i class="ri-question-line text-brand-yellow text-lg flex-shrink-0"></i>
+            Are there hidden charges in outstation trips?
+          </span>
+<i class="ri-arrow-down-s-line text-xl transition-transform duration-300 group-open:rotate-180 flex-shrink-0"></i>
+</summary>
+<div class="px-6 pb-6 text-gray-500 font-medium text-sm leading-relaxed">
+          No. Our quotes are 100% transparent. Fare includes driver allowance and base km charge. Tolls and state taxes are clearly disclosed before you confirm. No surprises, ever.
+        </div>
+</details>
+<details class="group bg-brand-gray border border-brand-borderGray rounded-xl hover:border-brand-yellow transition-colors [&amp;_summary::-webkit-details-marker]:hidden">
+<summary class="flex cursor-pointer items-center justify-between gap-4 p-6 font-bold">
+<span class="flex items-center gap-3 text-base">
+<i class="ri-heart-line text-brand-yellow text-lg flex-shrink-0"></i>
+            What does the Wedding Car package include?
+          </span>
+<i class="ri-arrow-down-s-line text-xl transition-transform duration-300 group-open:rotate-180 flex-shrink-0"></i>
+</summary>
+<div class="px-6 pb-6 text-gray-500 font-medium text-sm leading-relaxed">
+          Basic wedding package (starting ₹4,500 for Honda Amaze) includes fresh floral decoration, professionally dressed chauffeur, 8 hours / 150km. Premium LED &amp; custom floral upgrades available on request.
+        </div>
+</details>
+<details class="group bg-brand-gray border border-brand-borderGray rounded-xl hover:border-brand-yellow transition-colors [&amp;_summary::-webkit-details-marker]:hidden">
+<summary class="flex cursor-pointer items-center justify-between gap-4 p-6 font-bold">
+<span class="flex items-center gap-3 text-base">
+<i class="ri-flashlight-line text-brand-yellow text-lg flex-shrink-0"></i>
+            How fast can I confirm a booking?
+          </span>
+<i class="ri-arrow-down-s-line text-xl transition-transform duration-300 group-open:rotate-180 flex-shrink-0"></i>
+</summary>
+<div class="px-6 pb-6 text-gray-500 font-medium text-sm leading-relaxed">
+          WhatsApp us and we respond within minutes. Once you confirm, driver details are shared immediately. No delays, no long callbacks.
+        </div>
+</details>
+<details class="group bg-brand-gray border border-brand-borderGray rounded-xl hover:border-brand-yellow transition-colors [&amp;_summary::-webkit-details-marker]:hidden">
+<summary class="flex cursor-pointer items-center justify-between gap-4 p-6 font-bold">
+<span class="flex items-center gap-3 text-base">
+<i class="ri-map-2-line text-brand-yellow text-lg flex-shrink-0"></i>
+            Do you operate outside Muzaffarpur?
+          </span>
+<i class="ri-arrow-down-s-line text-xl transition-transform duration-300 group-open:rotate-180 flex-shrink-0"></i>
+</summary>
+<div class="px-6 pb-6 text-gray-500 font-medium text-sm leading-relaxed">
+          Yes! We cover all major Bihar routes — Patna, Darbhanga, Sitamarhi, Motihari, Raxual, Samastipur and more. Pan-India outstation trips also available. Just WhatsApp us your route.
+        </div>
+</details>
+</div>
+</div>
+</section>
+<section class="bg-brand-yellow py-16 reveal">
+<div class="max-w-4xl mx-auto px-4 text-center">
+<h2 class="text-3xl lg:text-4xl font-extrabold text-brand-black mb-3">Ready to Book? We're One Message Away.</h2>
+<p class="text-brand-black/75 font-medium text-base mb-8">No forms. No apps. Sirf ek WhatsApp aur aapki cab confirm.</p>
+<div class="flex flex-col sm:flex-row gap-4 justify-center">
+<a class="inline-flex items-center justify-center gap-2 px-10 py-4 bg-brand-black text-brand-yellow font-bold text-base rounded-xl hover:bg-gray-800 hover:scale-105 transition-all shadow-lg" href="https://wa.me/919304057169?text=Hi%20SadakYatra!%20I%20want%20to%20book%20a%20cab." rel="noopener" target="_blank">
+<i class="ri-whatsapp-line text-xl"></i> WhatsApp Us Now
+      </a>
+<a class="inline-flex items-center justify-center gap-2 px-10 py-4 bg-white text-brand-black font-bold text-base rounded-xl border-2 border-brand-black hover:bg-gray-50 transition-all" href="tel:9304057169">
+<i class="ri-phone-line text-xl"></i> Call: 9304057169
+      </a>
+</div>
+</div>
+</section>
+
+<script>
+// ── SCROLL REVEAL ──
+  const observer = new IntersectionObserver(entries => {
+    entries.forEach(e => { if (e.isIntersecting) e.target.classList.add('vis'); });
+  }, { threshold: 0.08 });
+  document.querySelectorAll('.reveal').forEach(el => observer.observe(el));
+
+  // ── TRIP TYPE STATE ──
+  var formTripType = 'oneway';
+  var calcTripType = 'oneway';
+
+  function setFormTripType(type) {
+    formTripType = type;
+    const ow = document.getElementById('form-oneway-btn');
+    const rt = document.getElementById('form-roundtrip-btn');
+    const wrap = document.getElementById('f-return-wrap');
+    if (type === 'oneway') {
+      ow.classList.add('bg-brand-yellow','text-brand-black','shadow-sm');
+      ow.classList.remove('text-gray-500');
+      rt.classList.remove('bg-brand-yellow','text-brand-black','shadow-sm');
+      rt.classList.add('text-gray-500');
+      wrap.style.maxHeight = '0';
+      wrap.style.opacity   = '0';
+    } else {
+      rt.classList.add('bg-brand-yellow','text-brand-black','shadow-sm');
+      rt.classList.remove('text-gray-500');
+      ow.classList.remove('bg-brand-yellow','text-brand-black','shadow-sm');
+      ow.classList.add('text-gray-500');
+      wrap.style.maxHeight = '120px';
+      wrap.style.opacity   = '1';
+    }
+  }
+
+  function setCalcTripType(type) {
+    calcTripType = type;
+    const ow = document.getElementById('calc-oneway-btn');
+    const rt = document.getElementById('calc-roundtrip-btn');
+    if (type === 'oneway') {
+      ow.classList.add('bg-brand-yellow','text-brand-black','shadow-sm');
+      ow.classList.remove('text-gray-500');
+      rt.classList.remove('bg-brand-yellow','text-brand-black','shadow-sm');
+      rt.classList.add('text-gray-500');
+    } else {
+      rt.classList.add('bg-brand-yellow','text-brand-black','shadow-sm');
+      rt.classList.remove('text-gray-500');
+      ow.classList.remove('bg-brand-yellow','text-brand-black','shadow-sm');
+      ow.classList.add('text-gray-500');
+    }
+    // Re-run highlights if result already visible
+    if (!document.getElementById('fareResult').classList.contains('hidden')) {
+      highlightFareCards();
+    }
+  }
+
+  // ── BOOKING FORM → WHATSAPP ──
+  function submitForm() {
+    const pickup     = document.getElementById('f-pickup').value  || 'Not specified';
+    const drop       = document.getElementById('f-drop').value    || 'Not specified';
+    const service    = document.getElementById('f-service').value;
+    const date       = document.getElementById('f-date').value    || 'Not specified';
+    const returnDate = document.getElementById('f-return').value  || 'Not specified';
+    const phone      = document.getElementById('f-phone').value   || 'Not provided';
+    const tripLabel  = formTripType === 'roundtrip' ? 'Round Trip' : 'One Way';
+
+    let tripLine = `🔁 Trip Type: ${tripLabel}\n`;
+    if (formTripType === 'roundtrip') {
+      tripLine += `📅 Return Date: ${returnDate}\n`;
+    }
+
+    const msg = encodeURIComponent(
+      `Hi SadakYatra! 🙏 I'd like to book a cab.\n\n` +
+      `📍 From: ${pickup}\n📍 To: ${drop}\n🚗 Service: ${service}\n📅 Date: ${date}\n` +
+      tripLine +
+      `📞 My Number: ${phone}\n\n` +
+      `Please confirm availability and fare.`
+    );
+    window.open(`https://wa.me/919304057169?text=${msg}`, '_blank');
+  }
+
+  // ============================================================
+  // ── FARE CALCULATOR — Google Sheet powered ──
+  // Edit prices/routes in Sheet — site auto-updates. No code touch.
+  // ============================================================
+  const SHEET_CFG = {
+    PUBLISHED_ID: '2PACX-1vT5E_RtgN5YCPZlv8KWQDcWP-vWB-jFIz-qwrdf9CL3hz74iuPBT2T8PSMg3H1uRr1DFjnqiy8Vsuv8',
+    ROUTES_GID:   '0',
+    RATES_GID:    '2138401815',
+    // true = sirf Muzaffarpur se judi routes use hongi (baaki sheet distances verified nahi hain)
+    ONLY_MUZAFFARPUR_ROUTES: true,
+  };
+
+  const FALLBACK_PRICING = {
+    routes: {
+      'Muzaffarpur|Patna':       75,
+      'Muzaffarpur|Darbhanga':   65,
+      'Muzaffarpur|Sitamarhi':   75,
+      'Muzaffarpur|Samastipur':  55,
+      'Muzaffarpur|Motihari':    80,
+      'Muzaffarpur|Raxual':      140,
+      'Muzaffarpur|Hajipur':     55,
+    },
+    rates: {
+      sedanPerKm: 23, suvPerKm: 27, roundTripMultiplier: 1.75,
+      localSedanFare: 1500, localSuvFare: 2000, minimumFare: 1500,
+    }
+  };
+
+  let pricingDB = { routes: {}, rates: {} };
+
+  function csvUrl(gid) {
+    return `https://docs.google.com/spreadsheets/d/e/${SHEET_CFG.PUBLISHED_ID}/pub?gid=${gid}&single=true&output=csv`;
+  }
+
+  function parseCSV(text) {
+    return text.trim().split(/\r?\n/).map(line =>
+      line.split(',').map(c => c.trim().replace(/^"|"$/g, ''))
+    );
+  }
+
+  async function loadPricing() {
+    // 1) Pehle admin panel (database) se try karo
+    try {
+      const apiRes = await fetch('/api/pricing');
+      if (apiRes.ok) {
+        const data = await apiRes.json();
+        if (data && data.rates && data.routes && Object.keys(data.routes).length) {
+          pricingDB = { rates: { ...FALLBACK_PRICING.rates, ...data.rates }, routes: data.routes };
+          populateCityDropdowns();
+          console.log(`Pricing loaded from admin panel: ${Object.keys(pricingDB.routes).length} routes`);
+          return;
+        }
+      }
+    } catch (e) { console.warn('Admin pricing unavailable, trying Google Sheet', e); }
+    // 2) Nahi mila to purani Google Sheet se
+    try {
+      const [routesRes, ratesRes] = await Promise.all([
+        fetch(csvUrl(SHEET_CFG.ROUTES_GID)),
+        fetch(csvUrl(SHEET_CFG.RATES_GID))
+      ]);
+      if (!routesRes.ok || !ratesRes.ok) throw new Error('Sheet fetch failed');
+      const routesRows = parseCSV(await routesRes.text());
+      const ratesRows  = parseCSV(await ratesRes.text());
+
+      pricingDB.routes = {};
+      for (let i = 1; i < routesRows.length; i++) {
+        const [from, to, dist] = routesRows[i];
+        if (SHEET_CFG.ONLY_MUZAFFARPUR_ROUTES && from !== 'Muzaffarpur' && to !== 'Muzaffarpur') continue;
+        if (from && to && dist && !isNaN(parseInt(dist))) {
+          pricingDB.routes[`${from}|${to}`] = parseInt(dist);
+        }
+      }
+
+      pricingDB.rates = { ...FALLBACK_PRICING.rates };
+      for (let i = 1; i < ratesRows.length; i++) {
+        const [setting, value] = ratesRows[i];
+        if (!setting || !value) continue;
+        const k = setting.toLowerCase().replace(/[^a-z0-9]/g, '');
+        const v = parseFloat(value);
+        if (isNaN(v)) continue;
+        if (k.includes('sedan') && k.includes('km'))            pricingDB.rates.sedanPerKm = v;
+        else if (k.includes('suv') && k.includes('km'))         pricingDB.rates.suvPerKm = v;
+        else if (k.includes('roundtrip') || k.includes('multi'))pricingDB.rates.roundTripMultiplier = v;
+        else if (k.includes('local') && k.includes('sedan'))    pricingDB.rates.localSedanFare = v;
+        else if (k.includes('local') && k.includes('suv'))      pricingDB.rates.localSuvFare = v;
+        else if (k.includes('min'))                              pricingDB.rates.minimumFare = v;
+      }
+      populateCityDropdowns();
+      console.log(`Pricing loaded: ${Object.keys(pricingDB.routes).length} routes`);
+    } catch (e) {
+      console.warn('Sheet unavailable, using fallback', e);
+      pricingDB = FALLBACK_PRICING;
+      populateCityDropdowns();
+    }
+  }
+
+  function populateCityDropdowns() {
+    const cities = new Set();
+    Object.keys(pricingDB.routes).forEach(key => {
+      const [a, b] = key.split('|');
+      cities.add(a); cities.add(b);
+    });
+    const sorted = Array.from(cities).sort();
+    const orig = document.getElementById('originInput');
+    const dest = document.getElementById('dropInput');
+    if (!orig || !dest) return;
+    orig.innerHTML = '<option value="">Select Origin</option>' +
+      sorted.map(c => `<option value="${c}">${c}</option>`).join('');
+    dest.innerHTML = '<option value="">Select Destination</option>' +
+      sorted.map(c => `<option value="${c}">${c}</option>`).join('');
+  }
+
+  function getDistance(from, to) {
+    return pricingDB.routes[`${from}|${to}`]
+        || pricingDB.routes[`${to}|${from}`]
+        || null;
+  }
+
+  function roundTo10(n) { return Math.round(n / 10) * 10; }
+
+  function highlightFareCards() {
+    const cards = [
+      document.getElementById('fare-card-ow-sedan'),
+      document.getElementById('fare-card-rt-sedan'),
+      document.getElementById('fare-card-ow-suv')
+    ];
+    if (calcTripType === 'oneway') {
+      // Highlight one-way cards, dim round trip
+      cards[0].classList.remove('opacity-40','scale-95');
+      cards[0].classList.add('border-brand-yellow','bg-yellow-50');
+      cards[1].classList.add('opacity-40','scale-95');
+      cards[1].classList.remove('border-brand-yellow','bg-yellow-50');
+      cards[2].classList.remove('opacity-40','scale-95');
+    } else {
+      // Highlight round trip, dim one-way cards
+      cards[1].classList.remove('opacity-40','scale-95');
+      cards[1].classList.add('border-brand-yellow','bg-yellow-50');
+      cards[0].classList.add('opacity-40','scale-95');
+      cards[0].classList.remove('border-brand-yellow','bg-yellow-50');
+      cards[2].classList.add('opacity-40','scale-95');
+    }
+  }
+
+  function calculateFare() {
+    const origin = document.getElementById('originInput').value;
+    const dest   = document.getElementById('dropInput').value;
+    if (!origin || !dest) { alert('Please select both Origin and Destination.'); return; }
+
+    const r = pricingDB.rates;
+    let s, rt, u;
+
+    if (origin === dest) {
+      s  = r.localSedanFare;
+      rt = r.localSedanFare;
+      u  = r.localSuvFare;
+    } else {
+      const distance = getDistance(origin, dest);
+      if (!distance) {
+        // Route not in sheet — show friendly fallback with WhatsApp CTA instead of blocking alert
+        document.getElementById('resOrigin').textContent = origin;
+        document.getElementById('resDrop').textContent   = dest;
+        document.getElementById('p1').textContent = '—';
+        document.getElementById('p2').textContent = '—';
+        document.getElementById('p3').textContent = '—';
+        const noRouteMsg = encodeURIComponent(
+          `Hi SadakYatra! I need a fare quote for ${origin} → ${dest}. Please share availability and price.`
+        );
+        document.getElementById('resWA').href = `https://wa.me/919304057169?text=${noRouteMsg}`;
+        const res = document.getElementById('fareResult');
+        res.classList.remove('hidden');
+        res.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        return;
+      }
+      s  = Math.max(roundTo10(distance * r.sedanPerKm), r.minimumFare);
+      rt = Math.max(roundTo10(distance * r.sedanPerKm * r.roundTripMultiplier), r.minimumFare);
+      u  = Math.max(roundTo10(distance * r.suvPerKm), r.minimumFare);
+    }
+
+    const label = (origin === dest) ? dest + ' (Local Ride)' : dest;
+    const tripLabel = calcTripType === 'roundtrip' ? 'Round Trip' : 'One Way';
+
+    document.getElementById('resOrigin').textContent = origin;
+    document.getElementById('resDrop').textContent   = label;
+    document.getElementById('p1').textContent = s.toLocaleString('en-IN');
+    document.getElementById('p2').textContent = rt.toLocaleString('en-IN');
+    document.getElementById('p3').textContent = u.toLocaleString('en-IN');
+
+    const msg = encodeURIComponent(
+      `Hi SadakYatra! I checked the fare estimator.\n\n📍 Route: ${origin} → ${label}\n🔁 Trip Type: ${tripLabel}\n\nPlease confirm availability and share booking details.`
+    );
+    document.getElementById('resWA').href = `https://wa.me/919304057169?text=${msg}`;
+
+    const res = document.getElementById('fareResult');
+    res.classList.remove('hidden');
+    highlightFareCards();
+    res.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', loadPricing);
+  } else {
+    loadPricing();
+  }
+
+  // ── SWAP CITIES ──
+  function swapCities() {
+    const o = document.getElementById('originInput');
+    const d = document.getElementById('dropInput');
+    const destVal = d.value;
+    const origVal = o.value;
+    
+    for (let opt of o.options) {
+      if (opt.value === destVal) { o.value = destVal; break; }
+    }
+    for (let opt of d.options) {
+      if (opt.value === origVal) { d.value = origVal; break; }
+    }
+  }
+</script>
+
+<script>
+(function(){
+  var KEY='AIzaSyB_w2_FiB3c5Zya8rJpglHJM-DMEBZVN9w';
+  var PID='ChIJkdEnnGsR7TkR4uLt35hZ0zY';
+  var FB=[
+    {name:'Arvind Singh',rating:5,text:'SadakYatra se wedding car book ki thi. Car decorated thi aur time se venue par aayi. Driver bhi well dressed tha. Highly recommended!',type:'Customer Feedback · Wedding'},
+    {name:'Pooja Verma', rating:5,text:'Outstation trip bahut smooth raha. Driver time pe aaya, car clean thi. Muzaffarpur se Patna Airport itna easy kabhi nahi laga!',type:'Customer Feedback · Airport Drop'},
+    {name:'Ravi Thakur', rating:5,text:'Service bahut badhiya thi. Driver time se aaye, car clean thi, safe feel hua. Rate transparent tha. Dobara zaroor book karunga.',type:'Customer Feedback · Outstation'},
+    {name:'Amit Kumar', rating:5,text:'Patna route ke liye booking easy rahi. Pickup timing clear tha, driver professional tha aur family ke saath ride comfortable rahi.',type:'Customer Feedback · Patna Route'},
+    {name:'Neha Singh', rating:5,text:'Wedding guest pickup ke liye coordination smooth tha. Car clean thi, driver polite tha aur follow-up bhi time par mila.',type:'Customer Feedback · Guest Pickup'},
+    {name:'Saurabh Raj', rating:5,text:'Airport drop ke liye SadakYatra reliable laga. Fare pehle se clear tha aur WhatsApp par confirmation fast mil gaya.',type:'Customer Feedback · Airport Transfer'}
+  ];
+  function stars(n){var s='';for(var i=1;i<=5;i++)s+='<i class="'+(i<=n?'ri-star-fill text-brand-yellow':'ri-star-line text-gray-300')+'"></i>';return s;}
+  function clip(s,n){return s&&s.length>n?s.slice(0,n).trimEnd()+'…':(s||'');}
+  function render(list){
+    var g=document.getElementById('reviews-grid');if(!g)return;
+    var ST=[
+      {w:'bg-white border-brand-borderGray',q:'text-gray-600',d:'border-gray-100',nm:'text-brand-black',sb:'text-gray-400'},
+      {w:'bg-brand-black border-gray-800',  q:'text-gray-300',d:'border-gray-700',nm:'text-white',      sb:'text-gray-400'},
+      {w:'bg-white border-brand-borderGray',q:'text-gray-600',d:'border-gray-100',nm:'text-brand-black',sb:'text-gray-400'},
+      {w:'bg-white border-brand-borderGray',q:'text-gray-600',d:'border-gray-100',nm:'text-brand-black',sb:'text-gray-400'},
+      {w:'bg-brand-black border-gray-800',  q:'text-gray-300',d:'border-gray-700',nm:'text-white',      sb:'text-gray-400'},
+      {w:'bg-white border-brand-borderGray',q:'text-gray-600',d:'border-gray-100',nm:'text-brand-black',sb:'text-gray-400'}
+    ];
+    g.innerHTML=list.slice(0,6).map(function(r,i){
+      var s=ST[i%ST.length],init=(r.name||'C')[0].toUpperCase();
+      return '<div class="review-card '+s.w+' rounded-2xl p-6 border shadow-sm">'+
+        '<div class="flex mb-3">'+stars(r.rating||5)+'</div>'+
+        '<p class="'+s.q+' font-medium text-sm leading-relaxed mb-5 italic">“'+clip(r.text,185)+'”</p>'+
+        '<div class="flex items-center gap-3 border-t '+s.d+' pt-4">'+
+        '<div class="w-9 h-9 rounded-full bg-brand-yellow flex items-center justify-center font-bold text-sm text-brand-black flex-shrink-0">'+init+'</div>'+
+        '<div><p class="font-bold text-sm '+s.nm+'">'+(r.name||'Customer')+'</p>'+
+        '<p class="text-xs font-bold '+s.sb+' flex items-center gap-1"><i class="ri-star-line"></i> '+(r.type||'Customer Feedback')+'</p></div>'+
+        '</div></div>';
+    }).join('');
+  }
+  window.initReviews=function(){
+    try{
+      var svc=new google.maps.places.PlacesService(document.createElement('div'));
+      svc.getDetails({placeId:PID,fields:['reviews','name','rating']},function(place,status){
+        if(status===google.maps.places.PlacesServiceStatus.OK&&place.reviews&&place.reviews.length){
+          var topReviews=place.reviews.sort(function(a,b){return b.rating-a.rating;}).slice(0,6)
+            .map(function(r){return{name:r.author_name,rating:r.rating,text:r.text,type:'Google Review'};});
+          render(topReviews);
+        } else { render(FB); }
+      });
+    } catch(e){ render(FB); }
+  };
+  function loadGoogle(){
+    // Google key sirf asli domain pe chalti hai — localhost / test link pe seedha fallback reviews
+    var host=location.hostname.replace(/^www\./,'');
+    if(host!=='sadakyatra.co.in'){ render(FB); return; }
+    var s=document.createElement('script');
+    s.src='https://maps.googleapis.com/maps/api/js?key='+KEY+'&libraries=places&loading=async&callback=initReviews';
+    s.async=true; s.onerror=function(){render(FB);};
+    document.head.appendChild(s);
+  }
+  if(document.readyState==='loading'){ window.addEventListener('DOMContentLoaded',loadGoogle); } else { loadGoogle(); }
+})();
+</script>
