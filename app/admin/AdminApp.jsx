@@ -10,8 +10,8 @@ import BillsPanel from './BillsPanel';
 import DriversPanel from './DriversPanel';
 import SettingsPanel from './SettingsPanel';
 
-export default function AdminApp() {
-  const sb = getSupabase();
+export default function AdminApp({ config }) {
+  const sb = getSupabase(config);
   const [session, setSession] = useState(undefined);
   const [isAdmin, setIsAdmin] = useState(null);
   const [tab, setTab] = useState('pages');
@@ -177,11 +177,11 @@ function SetupNeeded() {
       <Card className="p-8 max-w-lg w-full">
         <h1 className="text-xl font-extrabold mb-3">Admin panel is not connected yet</h1>
         <p className="text-gray-600 text-sm mb-4">
-          Supabase settings were not found. Create a <code>.env.local</code> file in the project folder (see <code>.env.example</code>),
-          add these two values, then restart <code>npm run dev</code>:
+          The server could not find the Supabase settings. Add these values, then restart (locally) or redeploy (on Vercel):
         </p>
-        <pre className="bg-brand-gray rounded-xl p-4 text-xs overflow-x-auto">NEXT_PUBLIC_SUPABASE_URL=...{'\n'}NEXT_PUBLIC_SUPABASE_ANON_KEY=...</pre>
-        <p className="text-gray-500 text-xs mt-4">On Vercel: add the same two values under Project → Settings → Environment Variables.</p>
+        <pre className="bg-brand-gray rounded-xl p-4 text-xs overflow-x-auto">NEXT_PUBLIC_SUPABASE_URL=...{'\n'}NEXT_PUBLIC_SUPABASE_ANON_KEY=...{'\n'}SUPABASE_SERVICE_ROLE_KEY=...</pre>
+        <p className="text-gray-500 text-xs mt-4">Locally: in the <code>.env.local</code> file. On Vercel: Project → Settings → Environment Variables, then Redeploy.</p>
+        <a href="/api/health" target="_blank" className="inline-block mt-4 text-sm font-semibold text-blue-700 hover:underline">Run setup check ↗</a>
       </Card>
     </Center>
   );

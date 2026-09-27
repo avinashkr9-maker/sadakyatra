@@ -1,7 +1,7 @@
 import QRCode from 'qrcode';
 import { notFound } from 'next/navigation';
 import { sbRest } from '@/lib/supabaseServer';
-import { supabaseConfigured } from '@/lib/supabaseConfig';
+import { sbConfigured } from '@/lib/supabaseConfig';
 import { money, upiLink, VEHICLES } from '@/lib/billing';
 import PrintButton from './PrintButton';
 
@@ -9,7 +9,7 @@ export const dynamic = 'force-dynamic';
 export const metadata = { title: 'Bill | SadakYatra', robots: { index: false, follow: false } };
 
 async function load(token) {
-  if (!supabaseConfigured || !/^[0-9a-f-]{36}$/i.test(token)) return null;
+  if (!sbConfigured() || !/^[0-9a-f-]{36}$/i.test(token)) return null;
   const r = await sbRest('/rest/v1/rpc/web_public_invoice', {
     method: 'POST', cache: 'no-store',
     headers: { 'Content-Type': 'application/json' },

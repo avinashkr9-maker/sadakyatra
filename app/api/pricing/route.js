@@ -1,14 +1,15 @@
-import { SUPABASE_URL, SUPABASE_ANON_KEY, supabaseConfigured } from '@/lib/supabaseConfig';
+import { sbUrl, sbAnonKey, sbConfigured } from '@/lib/supabaseConfig';
 
 export const dynamic = 'force-dynamic';
 
 // Website ka fare calculator yahan se rates + routes leta hai.
 // Admin panel mein save karo → 1 minute ke andar website pe dikhega.
 export async function GET() {
-  if (!supabaseConfigured) {
+  if (!sbConfigured()) {
     return Response.json({ error: 'not_configured' }, { status: 503 });
   }
-  const headers = { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}` };
+  const SUPABASE_URL = sbUrl();
+  const headers = { apikey: sbAnonKey(), Authorization: `Bearer ${sbAnonKey()}` };
   try {
     const [ratesRes, routesRes] = await Promise.all([
       fetch(`${SUPABASE_URL}/rest/v1/web_fare_rates?select=key,value`, { headers, cache: 'no-store' }),

@@ -1,14 +1,14 @@
-import { SUPABASE_URL, supabaseConfigured } from '@/lib/supabaseConfig';
+import { sbUrl, sbConfigured, sbServiceKey } from '@/lib/supabaseConfig';
 import { isAdminRequest } from '@/lib/supabaseServer';
 import { cleanPhone, driverEmail } from '@/lib/billing';
 
 export const dynamic = 'force-dynamic';
 
 // Service role key SIRF server pe (Vercel env). Kabhi NEXT_PUBLIC_ mat lagana.
-const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
 
 function svc(path, init = {}) {
-  return fetch(`${SUPABASE_URL}${path}`, {
+  const SERVICE_KEY = sbServiceKey();
+  return fetch(`${sbUrl()}${path}`, {
     ...init,
     cache: 'no-store',
     headers: { apikey: SERVICE_KEY, Authorization: `Bearer ${SERVICE_KEY}`, 'Content-Type': 'application/json', ...(init.headers || {}) },
@@ -17,8 +17,8 @@ function svc(path, init = {}) {
 const fail = (status, error) => Response.json({ error }, { status });
 
 async function guard(req) {
-  if (!supabaseConfigured) return fail(503, 'Supabase is not configured.');
-  if (!SERVICE_KEY) return fail(503, 'SUPABASE_SERVICE_ROLE_KEY is missing. Add it to .env.local (and Vercel env), then restart the server.');
+  if (!sbConfigured()) return fail(503, 'Supabase is not configured.');
+  if (!sbServiceKey()) return fail(503, 'SUPABASE_SERVICE_ROLE_KEY is missing. Add it to .env.local (and Vercel env), then restart the server.');
   if (!(await isAdminRequest(req))) return fail(401, 'Only the owner can manage drivers.');
   return null;
 }

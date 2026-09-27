@@ -7,8 +7,8 @@ import Icon from '../admin/icons';
 // ---------------------------------------------------------------------------
 // Driver app — phone pe chalne ke liye: login → naya bill → WhatsApp pe bhejo
 // ---------------------------------------------------------------------------
-export default function DriverApp() {
-  const sb = getSupabase();
+export default function DriverApp({ config }) {
+  const sb = getSupabase(config);
   const [session, setSession] = useState(undefined);
   const [me, setMe] = useState(null); // { name, isAdmin } | false
   const [view, setView] = useState({ name: 'home' });
