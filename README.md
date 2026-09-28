@@ -159,3 +159,16 @@ Admin → **Drivers** → **Add driver** → naam, phone number, PIN (apne aap b
 Mahine ke saare bills, total, pending payment, kis driver ke paas kitna cash, lal rang mein kam charge kiya gaya fare, Cash/UPI mark karna, galat bill Cancel karna (number series mein rehta hai), Excel (CSV) export.
 
 Bill numbers: `SY-2026-0001`, `SY-2026-0002`… har saal naye se. Delete nahi hota, sirf Cancel.
+
+---
+
+# Naye pages (Dev agent / manual)
+
+Poora process: `docs/DEV-AGENT-PAGES.md` (Dev agent ke AGENTS.md mein link karo).
+
+Short mein:
+1. `git checkout -b page/<slug>`
+2. `node scripts/new-page.mjs --slug ... --template ... --title ... --description ...`
+3. `page.html` mein content update
+4. `node scripts/check-page.mjs <slug> --old "PuranaShehar"` — ✘ ho to push mat karo
+5. Push → Vercel preview link → owner approve → `main` mein merge → live

@@ -48,5 +48,18 @@ export async function GET() {
     service_role_key: service,
     database_reachable: reachable,
     problems,
+    // Sirf naam aur lambai — koi value nahi
+    debug: {
+      env_vars_with_supabase_in_name: Object.keys(process.env)
+        .filter((k) => /supa/i.test(k))
+        .sort()
+        .map((k) => ({ name: JSON.stringify(k), value_length: String(process.env[k] || '').length })),
+      vercel_env: process.env.VERCEL_ENV || null,
+      vercel_project_url: process.env.VERCEL_PROJECT_PRODUCTION_URL || null,
+      deployment_url: process.env.VERCEL_URL || null,
+      git_branch: process.env.VERCEL_GIT_COMMIT_REF || null,
+      git_commit: (process.env.VERCEL_GIT_COMMIT_SHA || '').slice(0, 7) || null,
+      git_repo: process.env.VERCEL_GIT_REPO_OWNER ? `${process.env.VERCEL_GIT_REPO_OWNER}/${process.env.VERCEL_GIT_REPO_SLUG}` : null,
+    },
   }, { headers: { 'Cache-Control': 'no-store' } });
 }
