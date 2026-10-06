@@ -3,15 +3,8 @@ import cors from 'cors';
 import { customAlphabet } from 'nanoid';
 import db from './db.js';
 import { execSync } from 'node:child_process';
-import fs from 'node:fs';
-import path from 'node:path';
 
-// Initialize database if it doesn't exist
-const dbPath = path.resolve(process.cwd(), 'data.sqlite');
-if (!fs.existsSync(dbPath)) {
-  console.log('Initializing database...');
-  execSync('node scripts/init-db.js', { stdio: 'inherit' });
-}
+execSync('node scripts/init-db.js', { stdio: 'inherit' });
 
 const app = express();
 const port = process.env.PORT || 4000;
