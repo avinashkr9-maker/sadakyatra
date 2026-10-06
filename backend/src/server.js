@@ -1,5 +1,6 @@
 import express from 'express';
 import cors from 'cors';
+import { timingSafeEqual } from 'node:crypto';
 import { customAlphabet } from 'nanoid';
 import db from './db.js';
 import { execSync } from 'node:child_process';
@@ -16,6 +17,21 @@ app.use(express.json());
 const validCategories = new Set(['sedan', 'suv', 'traveller']);
 const validStatuses = new Set(['PENDING', 'CONFIRMED', 'ONGOING', 'COMPLETED', 'CANCELLED']);
 const validServiceTypes = new Set(['OUTSTATION', 'AIRPORT', 'WEDDING', 'LOCAL']);
+const adminApiKey = process.env.ADMIN_API_KEY || '';
+
+function requireAdmin(req, res, next) {
+  if (!adminApiKey) {
+    return res.status(503).json({ error: 'Admin API is not configured' });
+  }
+
+  const suppliedKey = Buffer.from(req.get('x-admin-api-key') || '');
+  const expectedKey = Buffer.from(adminApiKey);
+  if (suppliedKey.length !== expectedKey.length || !timingSafeEqual(suppliedKey, expectedKey)) {
+    return res.status(401).json({ error: 'Admin authentication required' });
+  }
+
+  next();
+}
 
 const appConfig = {
   brand: {
@@ -217,7 +233,7 @@ app.post('/bookings/:id/cancel', (req, res) => {
   res.json({ booking: updated });
 });
 
-app.get('/admin/bookings', (req, res) => {
+app.get('/admin/bookings', requireAdmin, (req, res) => {
   const status = req.query.status;
   if (status && !validStatuses.has(String(status))) {
     return res.status(400).json({ error: 'Invalid status filter' });
@@ -230,7 +246,7 @@ app.get('/admin/bookings', (req, res) => {
   res.json({ bookings: rows });
 });
 
-app.patch('/admin/bookings/:id/status', (req, res) => {
+app.patch('/admin/bookings/:id/status', requireAdmin, (req, res) => {
   const id = Number(req.params.id);
   const { status, changedByUserId, note } = req.body;
 

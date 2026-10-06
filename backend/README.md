@@ -30,6 +30,19 @@ The database will be automatically initialized on first deployment.
 - `GET /bookings/:id` - Get booking details
 - `GET /app/config` - Get app configuration
 - `GET /config` - Get app configuration alias for compatibility
+- `GET /admin/bookings` - List bookings; requires the admin API key
+- `PATCH /admin/bookings/:id/status` - Update a booking; requires the admin API key
+
+## Admin API Security
+
+Set `ADMIN_API_KEY` as a secret environment variable in the deployment service. Both admin endpoints require the same value in the `x-admin-api-key` request header. If the environment variable is missing, the admin endpoints return `503`; an absent or incorrect header returns `401`. Never commit the key or put it in a URL.
+
+For a local check in PowerShell:
+
+```powershell
+$headers = @{ 'x-admin-api-key' = $env:ADMIN_API_KEY }
+Invoke-RestMethod -Uri 'http://localhost:4000/admin/bookings' -Headers $headers
+```
 
 ## Sample Booking Request
 ```bash
@@ -46,5 +59,5 @@ curl -X POST https://your-railway-url.up.railway.app/bookings \
 ```
 
 ## Environment
-- Node.js 18.17.0 (specified in .nvmrc)
+- Node.js 24 or newer (required by `backend/package.json`)
 - Uses better-sqlite3 for fast SQLite operations
