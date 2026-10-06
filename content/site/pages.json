@@ -13,6 +13,7 @@
     { "slug": "muzaffarpur-to-samastipur-cab", "htmlUrl": true, "priority": 0.8, "changefreq": "weekly" },
     { "slug": "muzaffarpur-patna-airport-cab", "htmlUrl": true, "priority": 0.8, "changefreq": "weekly" },
     { "slug": "darbhanga-airport-cab-muzaffarpur", "htmlUrl": true, "priority": 0.8, "changefreq": "weekly" },
+    { "slug": "airport-in-muzaffarpur", "priority": 0.8, "changefreq": "weekly" },
     { "slug": "tempo-traveller-muzaffarpur", "htmlUrl": true, "priority": 0.8, "changefreq": "weekly" },
     { "slug": "railway-station-taxi-muzaffarpur", "htmlUrl": true, "priority": 0.8, "changefreq": "weekly" },
     { "slug": "bus-stand-taxi-muzaffarpur", "htmlUrl": true, "priority": 0.8, "changefreq": "weekly" },
