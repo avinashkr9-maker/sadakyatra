@@ -8,7 +8,7 @@ import Constants from 'expo-constants';
 //  Khaali rahega to app WhatsApp-only mode me chalega (login/booking
 //  in-app off, par call & WhatsApp booking chalta rahega).
 // ─────────────────────────────────────────────────────────────
-const PROD_URL = '';
+const PROD_URL = 'https://sadakyatra.onrender.com';
 
 const expoHost = Constants?.expoConfig?.hostUri?.split(':')?.[0] || null;
 
@@ -42,10 +42,14 @@ function candidateBases() {
   ].filter(Boolean);
 }
 
-// Ek base ko /health pe test karo, chhote timeout ke saath
-async function ping(base, ms = 2500) {
+// Ek base ko /health pe test karo, chhote timeout ke saath.
+// Render free instance so jaata hai aur jagne me ~50s lagta hai,
+// isliye PROD_URL ko lamba timeout dete hain taaki galti se
+// "offline" na samjhein.
+async function ping(base, ms) {
+  const timeoutMs = ms || (base === PROD_URL ? 55000 : 2500);
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), ms);
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const res = await fetch(`${base}/health`, { signal: controller.signal });
     clearTimeout(timer);

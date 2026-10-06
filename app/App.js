@@ -22,6 +22,7 @@ import {
   setBaseUrl,
   createBooking,
   listBookings,
+  getBooking,
   warmUp,
   isBackendOnline
 } from './src/api/client';
