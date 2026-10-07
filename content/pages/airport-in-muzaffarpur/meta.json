@@ -1,0 +1,23 @@
+{
+  "title": "Airport in Muzaffarpur | Taxi Planning | SadakYatra",
+  "description": "Looking for airport in Muzaffarpur? Get practical taxi help for Patna Airport, Darbhanga Airport, station pickup, hotel pickup, and local cab booking.",
+  "keywords": "airport in Muzaffarpur, Muzaffarpur airport taxi, Patna Airport cab from Muzaffarpur, Darbhanga Airport taxi Muzaffarpur, airport cab Muzaffarpur",
+  "robots": "index, follow",
+  "canonical": "https://sadakyatra.co.in/airport-in-muzaffarpur",
+  "og": {
+    "title": "Airport in Muzaffarpur | Airport Taxi Planning | SadakYatra",
+    "description": "Practical airport taxi help from Muzaffarpur to Patna Airport and Darbhanga Airport with WhatsApp booking support.",
+    "type": "website",
+    "url": "https://sadakyatra.co.in/airport-in-muzaffarpur",
+    "locale": "en_IN"
+  },
+  "twitter": {
+    "card": "summary_large_image",
+    "title": "Airport in Muzaffarpur | Airport Taxi Planning | SadakYatra",
+    "description": "Plan Patna Airport and Darbhanga Airport taxi travel from Muzaffarpur with SadakYatra."
+  },
+  "other": {
+    "geo.region": "IN-BR",
+    "geo.placename": "Muzaffarpur"
+  }
+}
