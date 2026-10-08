@@ -141,17 +141,28 @@ export function login(phone, fullName) {
     body: JSON.stringify({ phone, fullName })
   });
 }
-export function estimateFare(origin, destination, category) {
-  return request('/pricing/estimate', { method: 'POST', body: JSON.stringify({ origin, destination, category }) });
+export function estimateFare(category, distanceKm, serviceType = 'OUTSTATION', roundTrip = false) {
+  return request('/pricing/estimate', {
+    method: 'POST',
+    body: JSON.stringify({ category, distanceKm, serviceType, roundTrip })
+  });
 }
 export function createBooking(payload) {
   return request('/bookings', { method: 'POST', body: JSON.stringify(payload) });
+}
+export function submitPartnerApplication(payload) {
+  return request('/partners/applications', { method: 'POST', body: JSON.stringify(payload) });
 }
 export function listBookings(phone) {
   return request(`/bookings?phone=${encodeURIComponent(phone)}`);
 }
 export function getBooking(id) {
   return request(`/bookings/${id}`);
+}
+export function getBookingTracking(id, trackingToken) {
+  return request(`/bookings/${id}/tracking`, {
+    headers: { 'x-booking-tracking-token': trackingToken }
+  });
 }
 export function cancelBooking(id, phone, note) {
   return request(`/bookings/${id}/cancel`, { method: 'POST', body: JSON.stringify({ phone, note }) });

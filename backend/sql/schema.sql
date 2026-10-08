@@ -8,20 +8,73 @@ CREATE TABLE IF NOT EXISTS users (
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+CREATE TABLE IF NOT EXISTS partner_applications (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  application_ref TEXT UNIQUE NOT NULL,
+  full_name TEXT NOT NULL,
+  phone TEXT NOT NULL,
+  vehicle_number TEXT NOT NULL,
+  vehicle_category TEXT NOT NULL CHECK(vehicle_category IN ('sedan','suv','traveller')),
+  vehicle_model TEXT NOT NULL,
+  seats INTEGER,
+  driver_name TEXT NOT NULL,
+  driver_phone TEXT NOT NULL,
+  city TEXT NOT NULL,
+  operating_area TEXT NOT NULL,
+  phone_verified INTEGER NOT NULL DEFAULT 0,
+  rc_document_key TEXT,
+  dl_document_key TEXT,
+  insurance_document_key TEXT,
+  status TEXT NOT NULL DEFAULT 'PENDING' CHECK(status IN ('PENDING','APPROVED','REJECTED')),
+  review_note TEXT,
+  reviewed_at TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS partners (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  partner_ref TEXT UNIQUE NOT NULL,
+  application_id INTEGER UNIQUE NOT NULL,
+  full_name TEXT NOT NULL,
+  phone TEXT NOT NULL,
+  city TEXT NOT NULL,
+  operating_area TEXT NOT NULL,
+  active INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  FOREIGN KEY (application_id) REFERENCES partner_applications(id)
+);
+
 CREATE TABLE IF NOT EXISTS drivers (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   user_id INTEGER UNIQUE NOT NULL,
+  partner_id INTEGER,
+  driver_name TEXT,
+  phone TEXT,
+  access_token_hash TEXT,
   is_active INTEGER NOT NULL DEFAULT 1,
-  FOREIGN KEY (user_id) REFERENCES users(id)
+  is_online INTEGER NOT NULL DEFAULT 0,
+  latitude REAL,
+  longitude REAL,
+  location_updated_at TEXT,
+  FOREIGN KEY (user_id) REFERENCES users(id),
+  FOREIGN KEY (partner_id) REFERENCES partners(id)
 );
 
 CREATE TABLE IF NOT EXISTS vehicles (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
+  cab_ref TEXT UNIQUE,
   plate_no TEXT UNIQUE NOT NULL,
   category TEXT NOT NULL,
   model TEXT,
   seats INTEGER,
-  active INTEGER NOT NULL DEFAULT 1
+  active INTEGER NOT NULL DEFAULT 1,
+  partner_id INTEGER,
+  driver_id INTEGER,
+  rc_document_key TEXT,
+  dl_document_key TEXT,
+  insurance_document_key TEXT,
+  FOREIGN KEY (partner_id) REFERENCES partners(id),
+  FOREIGN KEY (driver_id) REFERENCES drivers(id)
 );
 
 CREATE TABLE IF NOT EXISTS fare_rules (
@@ -43,6 +96,13 @@ CREATE TABLE IF NOT EXISTS bookings (
   service_type TEXT NOT NULL,
   pickup_text TEXT NOT NULL,
   drop_text TEXT NOT NULL,
+  pickup_latitude REAL,
+  pickup_longitude REAL,
+  drop_latitude REAL,
+  drop_longitude REAL,
+  route_distance_km REAL,
+  tracking_token_hash TEXT,
+  driver_status TEXT,
   trip_datetime TEXT NOT NULL,
   car_category TEXT NOT NULL,
   estimated_fare REAL,
@@ -69,5 +129,17 @@ CREATE TABLE IF NOT EXISTS booking_status_events (
   FOREIGN KEY (changed_by_user_id) REFERENCES users(id)
 );
 
+CREATE TABLE IF NOT EXISTS driver_status_events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  booking_id INTEGER NOT NULL,
+  driver_id INTEGER NOT NULL,
+  status TEXT NOT NULL CHECK(status IN ('OFFERED','BOOKING_ACCEPTED','BOOKING_REJECTED','GOING_TO_PICKUP','ARRIVED','TRIP_STARTED','TRIP_COMPLETED')),
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  FOREIGN KEY (booking_id) REFERENCES bookings(id),
+  FOREIGN KEY (driver_id) REFERENCES drivers(id)
+);
+
 CREATE INDEX IF NOT EXISTS idx_bookings_status ON bookings(status);
 CREATE INDEX IF NOT EXISTS idx_bookings_trip_datetime ON bookings(trip_datetime);
+CREATE INDEX IF NOT EXISTS idx_partner_applications_status ON partner_applications(status);
+CREATE INDEX IF NOT EXISTS idx_driver_status_events_booking ON driver_status_events(booking_id, id);

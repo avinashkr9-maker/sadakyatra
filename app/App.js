@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   Alert,
   ImageBackground,
@@ -13,16 +13,21 @@ import {
   StyleSheet,
   Text,
   TextInput,
+  useWindowDimensions,
   View
 } from 'react-native';
+import MapView, { Marker } from 'react-native-maps';
+import Svg, { Circle, Path, Text as SvgText } from 'react-native-svg';
 import { LinearGradient } from 'expo-linear-gradient';
 import {
   login,
   setAuthToken,
   setBaseUrl,
   createBooking,
+  submitPartnerApplication,
   listBookings,
   getBooking,
+  getBookingTracking,
   warmUp,
   isBackendOnline
 } from './src/api/client';
@@ -59,6 +64,27 @@ const BRAND = {
   reviews: 40
 };
 
+const FARE_RATES = {
+  sedanPerKm: 23,
+  suvPerKm: 27,
+  roundTripMultiplier: 1.75,
+  localSedanFare: 1500,
+  localSuvFare: 2000,
+  minimumFare: 1500
+};
+
+function calculateFare(category, distanceKm, service) {
+  if (category === 'traveller') return null;
+  if (service === 'Local City Ride') {
+    return category === 'sedan' ? FARE_RATES.localSedanFare : FARE_RATES.localSuvFare;
+  }
+  if (distanceKm == null) return null;
+
+  const rate = category === 'sedan' ? FARE_RATES.sedanPerKm : FARE_RATES.suvPerKm;
+  const oneWayFare = Math.max(distanceKm * rate, FARE_RATES.minimumFare);
+  return Math.round(oneWayFare * (service === 'Round Trip' ? FARE_RATES.roundTripMultiplier : 1));
+}
+
 const img = {
   icon: require('./assets/loveable/icon-192.png'),
   map: require('./assets/loveable/map-bg.jpg'),
@@ -76,29 +102,29 @@ const FLEET = [
     name: 'Premium Sedan',
     models: 'Honda Amaze · Swift Dzire',
     seats: '4 Seats',
-    price: '₹1,699',
-    unit: 'one way',
+    price: '₹23/km',
+    unit: '₹1,500 minimum',
     image: img.sedan,
     badge: 'MOST POPULAR',
-    features: ['Fully Air Conditioned', 'Professional Chauffeur', 'Best for Airport & Outstation']
+    features: ['Fully Air Conditioned', 'Professional Chauffeur', 'Best for Airport & Drop Only']
   },
   {
     id: 'suv',
     name: 'Luxury SUV',
     models: 'Toyota Innova · Ertiga · Scorpio',
     seats: '6-7 Seats',
-    price: '₹1,999',
-    unit: 'one way',
+    price: '₹27/km',
+    unit: '₹1,500 minimum',
     image: img.suv,
-    features: ['Extra Space & Legroom', 'Family Outstation', 'Wedding Decoration Available']
+    features: ['Extra Space & Legroom', 'Family Drop-Only Trips', 'Wedding Decoration Available']
   },
   {
     id: 'tempo',
     name: 'Tempo Traveller',
     models: 'Force Traveller · Minibus',
     seats: '12-26 Seats',
-    price: '₹25/km',
-    unit: 'per km',
+    price: 'Quote required',
+    unit: 'rate not provided',
     image: img.tempo,
     features: ['Pushback Seating', 'Baraats, Pilgrimages & Trips', 'Dual Drivers Long Routes']
   }
@@ -118,12 +144,12 @@ const SERVICES = [
   },
   {
     id: 'outstation',
-    title: 'Outstation Cabs',
-    short: 'Muzaffarpur ↔ Patna · ₹1,699 one way',
-    description: "Bihar's most travelled route - fixed fare, door-to-door pickup, AC cab. NH-27 via Hajipur - fastest route, on-time every time.",
-    price: '₹1,699',
-    priceNote: 'One way Sedan · RT ₹2,999',
-    features: ['Door-to-Door', 'No Hidden Charges', 'Clean AC Cab', 'One Way & Round Trip'],
+    title: 'Drop Only Cabs',
+    short: 'Drop Only · Sedan ₹23/km',
+    description: "Door-to-door AC cab service across Bihar with Sedan and SUV rates calculated from the selected road distance.",
+    price: '₹23/km',
+    priceNote: 'Minimum fare ₹1,500 · round trip ×1.75',
+    features: ['Door-to-Door', 'Rate Shared Before Confirmation', 'Clean AC Cab', 'One Way & Round Trip'],
     image: img.outstation,
     icon: Car
   },
@@ -132,8 +158,8 @@ const SERVICES = [
     title: 'Airport Transfer',
     short: 'Patna & Darbhanga airports · 24x7',
     description: 'Muzaffarpur se Patna Airport (PAT) aur Darbhanga Airport (DBR) - flight tracking, on-time pickup, zero waiting. Early morning special available.',
-    price: '₹1,699',
-    priceNote: 'Patna Airport · Sedan',
+    price: '₹23/km',
+    priceNote: 'Sedan · minimum fare ₹1,500',
     features: ['Flight Tracking', 'On-Time Guarantee', 'Early Morning Pickup', 'Both Airports'],
     image: img.airport,
     icon: Plane
@@ -143,19 +169,19 @@ const SERVICES = [
     title: 'Tempo Traveller Hire',
     short: '12-26 seater for groups & pilgrimage',
     description: 'Family trips, pilgrimage to Vaishali-Gaya-Bodh Gaya, baraat groups, corporate outings - 12 to 26 seater AC tempo with pushback seats.',
-    price: '₹25/km',
-    priceNote: '12 Seater · Min 100km',
+    price: 'Quote required',
+    priceNote: 'Tempo Traveller rate not in rate card',
     features: ['12-26 Seater', 'Pushback Seats', 'All Bihar Routes', 'Dual Drivers'],
     image: img.tempo,
     icon: Sparkles
   },
   {
     id: 'local',
-    title: 'Local & Outstation',
+    title: 'Local & Drop Only',
     short: 'All routes across Bihar',
     description: 'Muzaffarpur to Darbhanga, Sitamarhi, Motihari, Samastipur, Patna - sab routes cover. Local city rides bhi available. Instant taxi booking on WhatsApp.',
-    price: '₹1,699',
-    priceNote: 'Outstation Sedan · One Way',
+    price: '₹23/km',
+    priceNote: 'Sedan · minimum fare ₹1,500',
     features: ['All Bihar Routes', 'Local City Rides', 'Instant Booking', 'Same Driver Both Ways'],
     image: img.outstation,
     icon: MapPin
@@ -163,22 +189,22 @@ const SERVICES = [
 ];
 
 const ROUTES = [
-  { from: 'Muzaffarpur', to: 'Patna', sedan: 1699, suv: 2499, rt: 2999 },
-  { from: 'Muzaffarpur', to: 'Darbhanga', sedan: 1699, suv: 2499, rt: 2999 },
-  { from: 'Muzaffarpur', to: 'Patna Airport', sedan: 1699, suv: 2499, rt: 2999 },
-  { from: 'Muzaffarpur', to: 'Darbhanga Airport', sedan: 1699, suv: 2499, rt: 2999 },
-  { from: 'Muzaffarpur', to: 'Sitamarhi', sedan: 1699, suv: 2499, rt: 2999 },
-  { from: 'Muzaffarpur', to: 'Motihari', sedan: 1999, suv: 2799, rt: 3499 },
-  { from: 'Muzaffarpur', to: 'Samastipur', sedan: 1700, suv: 2500, rt: 3000 },
-  { from: 'Muzaffarpur', to: 'Raxual', sedan: 2699, suv: 3499, rt: 4499 }
+  { from: 'Muzaffarpur', to: 'Patna' },
+  { from: 'Muzaffarpur', to: 'Darbhanga' },
+  { from: 'Muzaffarpur', to: 'Patna Airport' },
+  { from: 'Muzaffarpur', to: 'Darbhanga Airport' },
+  { from: 'Muzaffarpur', to: 'Sitamarhi' },
+  { from: 'Muzaffarpur', to: 'Motihari' },
+  { from: 'Muzaffarpur', to: 'Samastipur' },
+  { from: 'Muzaffarpur', to: 'Raxual' }
 ];
 
 const serviceTypeMap = {
-  'Outstation / Intercity': 'OUTSTATION',
+  'Drop Only': 'OUTSTATION',
+  'Round Trip': 'OUTSTATION',
   'Wedding Car - Baraat / Bidai': 'WEDDING',
   'Airport Transfer': 'AIRPORT',
-  'Local City Ride': 'LOCAL',
-  'Tempo Traveller': 'OUTSTATION'
+  'Local City Ride': 'LOCAL'
 };
 
 const REVIEWS = [
@@ -234,12 +260,17 @@ export default function App() {
   const [tab, setTab] = useState('home');
   const [from, setFrom] = useState('Muzaffarpur');
   const [to, setTo] = useState('Patna');
-  const [service, setService] = useState('Outstation / Intercity');
+  const [pickupLocation, setPickupLocation] = useState({ label: 'Muzaffarpur', latitude: 26.1209, longitude: 85.391 });
+  const [dropLocation, setDropLocation] = useState({ label: 'Patna', latitude: 25.5941, longitude: 85.1376 });
+  const [carCategory, setCarCategory] = useState('sedan');
+  const [service, setService] = useState('Drop Only');
   const [phone, setPhone] = useState('');
   const [date, setDate] = useState(new Date(Date.now() + 60 * 60 * 1000));
   const [dateText, setDateText] = useState(formatDate(new Date(Date.now() + 60 * 60 * 1000)));
   const [lastTrip, setLastTrip] = useState(null);
   const [bookings, setBookings] = useState([]);
+  const [trackingTokens, setTrackingTokens] = useState({});
+  const [bookingTracking, setBookingTracking] = useState(null);
   const [selectedBooking, setSelectedBooking] = useState(null);
   const [bookingEvents, setBookingEvents] = useState([]);
   const [loadingBookings, setLoadingBookings] = useState(false);
@@ -251,11 +282,6 @@ export default function App() {
   const [authName, setAuthName] = useState('');
   const [authLoading, setAuthLoading] = useState(false);
   const [authError, setAuthError] = useState(null);
-
-  const matchedRoute = useMemo(
-    () => ROUTES.find((r) => r.from.toLowerCase() === from.toLowerCase() && r.to.toLowerCase() === to.toLowerCase()),
-    [from, to]
-  );
 
   useEffect(() => {
     setBaseUrl(apiUrl);
@@ -315,36 +341,43 @@ export default function App() {
     return handleLogin();
   }
 
-  function bookOnWhatsApp() {
+  function bookOnWhatsApp(routeDistanceKm) {
+    const fare = calculateFare(carCategory, routeDistanceKm, service);
     const msg =
       `Hi ${BRAND.name}! Booking request:\n` +
       `• Service: ${service}\n` +
+      `• Vehicle: ${FLEET.find((vehicle) => vehicle.id === (carCategory === 'traveller' ? 'tempo' : carCategory))?.name || carCategory}\n` +
       `• From: ${from}\n` +
       `• To: ${to}\n` +
+      (routeDistanceKm ? `• Road distance: ${routeDistanceKm} km\n` : '') +
+      (fare !== null ? `• Rate-card fare: ₹${fare}\n` : '• Fare: Quote required\n') +
       `• Date: ${dateText}\n` +
       (phone ? `• Phone: ${phone}\n` : '') +
-      `Please confirm availability & fare.`;
+      `Please confirm availability and any toll, parking, or tax inclusions.`;
     Linking.openURL(wa(msg));
   }
 
-  async function sendBooking() {
+  async function sendBooking(routeDistanceKm) {
     if (!phone) {
       return Alert.alert('Phone required', 'Enter your phone number so we can confirm your booking.');
     }
 
+    if (carCategory !== 'traveller' && service !== 'Local City Ride' && !(routeDistanceKm > 0)) {
+      return Alert.alert('Road distance unavailable', 'Set pickup and drop pins or try calculating the route again before requesting a fare.');
+    }
+
     // Backend offline ho to seedha WhatsApp par booking bhejo.
     if (!(await isBackendOnline())) {
-      bookOnWhatsApp();
+      bookOnWhatsApp(routeDistanceKm);
       return;
     }
 
     if (!(await ensureLoggedIn())) {
-      bookOnWhatsApp();
+      bookOnWhatsApp(routeDistanceKm);
       return;
     }
 
     const serviceType = serviceTypeMap[service] || 'OUTSTATION';
-    const carCategory = service === 'Tempo Traveller' ? 'traveller' : 'sedan';
     const tripDate = parseTripDate(dateText);
 
     if (!tripDate) {
@@ -362,10 +395,19 @@ export default function App() {
         drop: to,
         tripDatetime: tripDate.toISOString(),
         carCategory,
+        pickupLatitude: pickupLocation?.latitude ?? null,
+        pickupLongitude: pickupLocation?.longitude ?? null,
+        dropLatitude: dropLocation?.latitude ?? null,
+        dropLongitude: dropLocation?.longitude ?? null,
+        routeDistanceKm: routeDistanceKm ?? null,
+        roundTrip: service === 'Round Trip',
         customerNote: service
       };
       const data = await createBooking(payload);
       const booking = data.booking;
+      if (data.trackingToken) {
+        setTrackingTokens((current) => ({ ...current, [booking.id]: data.trackingToken }));
+      }
 
       setLastTrip({
         from,
@@ -380,7 +422,7 @@ export default function App() {
       await fetchBookings();
     } catch (err) {
       // In-app booking fail — customer ko rokna nahi, WhatsApp par bhejo.
-      bookOnWhatsApp();
+      bookOnWhatsApp(routeDistanceKm);
     } finally {
       setSubmitting(false);
     }
@@ -405,10 +447,28 @@ export default function App() {
       .then((data) => {
         setSelectedBooking(data.booking);
         setBookingEvents(data.events || []);
+        setBookingTracking(null);
+        const token = trackingTokens[id];
+        if (token) {
+          getBookingTracking(id, token)
+            .then((trackingData) => setBookingTracking(trackingData.tracking))
+            .catch(() => {});
+        }
       })
       .catch((err) => setBookingError(err.message || 'Could not load booking details.'))
       .finally(() => setLoadingBookings(false));
   }
+
+  useEffect(() => {
+    if (!selectedBooking || !trackingTokens[selectedBooking.id]) return undefined;
+    const refreshTracking = () => {
+      getBookingTracking(selectedBooking.id, trackingTokens[selectedBooking.id])
+        .then((data) => setBookingTracking(data.tracking))
+        .catch(() => {});
+    };
+    const interval = setInterval(refreshTracking, 15000);
+    return () => clearInterval(interval);
+  }, [selectedBooking?.id, trackingTokens]);
 
   useEffect(() => {
     if (tab === 'bookings' && phone) {
@@ -421,7 +481,7 @@ export default function App() {
       <StatusBar barStyle="light-content" />
       <Header user={user} onLoginPress={() => setAuthModalVisible(true)} />
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-        {tab === 'home' && <HomeScreen onBook={() => setTab('book')} onRoute={(route) => { setFrom(route.from); setTo(route.to); setTab('book'); }} apiUrl={apiUrl} setApiUrl={setApiUrl} />}
+        {tab === 'home' && <HomeScreen onBook={() => setTab('book')} onRoute={(route) => { setFrom(route.from); setTo(route.to); setPickupLocation(null); setDropLocation(null); setTab('book'); }} apiUrl={apiUrl} setApiUrl={setApiUrl} />}
         {tab === 'fleet' && <FleetScreen />}
         {tab === 'services' && <ServicesScreen onBook={() => setTab('book')} />}
         {tab === 'bookings' && (
@@ -431,6 +491,7 @@ export default function App() {
             loading={loadingBookings}
             error={bookingError}
             selectedBooking={selectedBooking}
+            tracking={bookingTracking}
             events={bookingEvents}
             onRefresh={fetchBookings}
             onSelectBooking={fetchBookingDetails}
@@ -444,16 +505,21 @@ export default function App() {
           <BookScreen
             from={from}
             to={to}
+            pickupLocation={pickupLocation}
+            dropLocation={dropLocation}
             service={service}
+            carCategory={carCategory}
             phone={phone}
             date={dateText}
-            matchedRoute={matchedRoute}
             onFrom={setFrom}
             onTo={setTo}
+            onPickupLocation={(location) => { setPickupLocation(location); setFrom(location?.label || from); }}
+            onDropLocation={(location) => { setDropLocation(location); setTo(location?.label || to); }}
             onService={setService}
+            onCarCategory={setCarCategory}
             onPhone={setPhone}
             onDate={setDateText}
-            onSend={sendBooking}
+            onSend={(distance) => sendBooking(distance)}
             isSubmitting={submitting}
           />
         )}
@@ -505,13 +571,7 @@ export default function App() {
 function Header({ user, onLoginPress }) {
   return (
     <View style={styles.header}>
-      <BrandGradient style={styles.logoWrap}>
-        <Text style={styles.logoInitial}>S</Text>
-      </BrandGradient>
-      <View style={styles.headerText}>
-        <Text style={styles.logoTitle}>सड़क<Text style={styles.logoAccent}>Yatra</Text></Text>
-        <Text style={styles.logoSub}>{BRAND.tagline}</Text>
-      </View>
+      <BrandLogo />
       <View style={styles.headerRight}>
         <Pressable style={styles.headerAction} onPress={onLoginPress}>
           <User color={colors.primary} size={18} strokeWidth={2.5} />
@@ -522,6 +582,21 @@ function Header({ user, onLoginPress }) {
         </Pressable>
       </View>
     </View>
+  );
+}
+
+function BrandLogo() {
+  return (
+    <Svg width={138} height={65} viewBox="0 0 320 150" accessibilityLabel="SadakYatra">
+      <SvgText x="4" y="69" fill="#39334F" fontFamily="sans-serif" fontSize="56" fontWeight="700">सड़क</SvgText>
+      <SvgText x="134" y="69" fill="#F1D900" fontFamily="sans-serif" fontSize="56" fontWeight="700">Yatra</SvgText>
+      <SvgText x="137" y="108" fill="#514B70" fontFamily="sans-serif" fontSize="27" fontStyle="italic">SadakYatra</SvgText>
+      <Path d="M69 137 H318" fill="none" stroke="#F1D900" strokeWidth="4" />
+      <Path d="M69 132c-8-10-13-16-13-22a13 13 0 1 1 26 0c0 6-5 12-13 22Z" fill="none" stroke="#39334F" strokeWidth="2.5" />
+      <Circle cx="69" cy="110" r="4" fill="none" stroke="#39334F" strokeWidth="2" />
+      <Path d="M91 134c-5-7-8-11-8-16a8 8 0 1 1 16 0c0 4-3 9-8 16Z" fill="none" stroke="#39334F" strokeWidth="2" />
+      <Circle cx="91" cy="118" r="2.5" fill="none" stroke="#39334F" strokeWidth="1.5" />
+    </Svg>
   );
 }
 
@@ -618,10 +693,10 @@ function RoutePreview({ onBook }) {
 
 function QuickPills({ onBook }) {
   const pills = [
-    { icon: Plane, label: 'Patna Airport', sub: '₹1,699' },
+    { icon: Plane, label: 'Patna Airport', sub: 'Sedan ₹23/km' },
     { icon: Heart, label: 'Wedding Car', sub: 'from ₹4,500' },
-    { icon: Briefcase, label: 'Outstation', sub: 'fixed fare' },
-    { icon: MapPin, label: 'Darbhanga', sub: '₹1,699' }
+    { icon: Briefcase, label: 'Drop Only', sub: 'rate by distance' },
+    { icon: MapPin, label: 'Darbhanga', sub: 'Sedan ₹23/km' }
   ];
   return (
     <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.pillRow}>
@@ -676,6 +751,91 @@ function FleetScreen() {
           </CardGradient>
         ))}
       </View>
+      <PartnerApplicationForm />
+    </View>
+  );
+}
+
+function PartnerApplicationForm() {
+  const [application, setApplication] = useState({
+    fullName: '',
+    phone: '',
+    vehicleNumber: '',
+    vehicleCategory: 'sedan',
+    vehicleModel: '',
+    seats: '',
+    driverName: '',
+    driverPhone: '',
+    city: '',
+    operatingArea: ''
+  });
+  const [submitting, setSubmitting] = useState(false);
+  const [message, setMessage] = useState('');
+
+  function updateApplication(field, value) {
+    setApplication((current) => ({ ...current, [field]: value }));
+  }
+
+  async function submitApplication() {
+    setSubmitting(true);
+    setMessage('');
+    try {
+      const data = await submitPartnerApplication({
+        ...application,
+        seats: application.seats ? Number(application.seats) : null
+      });
+      setMessage(`${data.application.applicationRef} received. Our team will call to verify your details and documents.`);
+      setApplication({ ...application, fullName: '', phone: '', vehicleNumber: '', vehicleModel: '', seats: '', driverName: '', driverPhone: '', city: '', operatingArea: '' });
+    } catch (error) {
+      setMessage(error.message || 'Could not submit application. Check the connection and try again.');
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  const fields = [
+    { key: 'fullName', label: 'Owner name' },
+    { key: 'phone', label: 'Owner mobile', keyboardType: 'phone-pad' },
+    { key: 'vehicleNumber', label: 'Vehicle registration', autoCapitalize: 'characters' },
+    { key: 'vehicleModel', label: 'Vehicle model' },
+    { key: 'driverName', label: 'Driver name' },
+    { key: 'driverPhone', label: 'Driver mobile', keyboardType: 'phone-pad' },
+    { key: 'city', label: 'City' },
+    { key: 'operatingArea', label: 'Operating area' },
+    { key: 'seats', label: 'Seats', keyboardType: 'number-pad' }
+  ];
+
+  return (
+    <View style={styles.partnerSection}>
+      <SectionTitle eyebrow="Partner with us" title="Become a Cab Partner" subtitle="Register your cab for review by the SadakYatra team." />
+      <CardGradient style={styles.partnerPanel}>
+        <SelectField icon={Car} label="Vehicle type" value={application.vehicleCategory} options={[
+          { value: 'sedan', label: 'Sedan' },
+          { value: 'suv', label: 'SUV' },
+          { value: 'traveller', label: 'Tempo Traveller' }
+        ]} onValue={(value) => updateApplication('vehicleCategory', value)} />
+        {fields.map((field) => (
+          <View key={field.key} style={styles.fieldBox}>
+            <Text style={styles.fieldLabel}>{field.label}</Text>
+            <TextInput
+              value={application[field.key]}
+              onChangeText={(value) => updateApplication(field.key, value)}
+              keyboardType={field.keyboardType || 'default'}
+              autoCapitalize={field.autoCapitalize || 'words'}
+              placeholder={field.label}
+              placeholderTextColor={colors.placeholder}
+              style={styles.fieldInput}
+            />
+          </View>
+        ))}
+        <Text style={styles.partnerDisclosure}>Applications stay pending until our team verifies your mobile and RC, DL, and insurance. Do not send document scans here; secure upload is not enabled yet.</Text>
+        {message ? <Text style={styles.partnerMessage}>{message}</Text> : null}
+        <Pressable style={styles.smallCtaOuter} onPress={submitApplication} disabled={submitting}>
+          <BrandGradient style={styles.smallCta}>
+            <Text style={styles.smallCtaText}>{submitting ? 'Submitting…' : 'Submit partner application'}</Text>
+          </BrandGradient>
+        </Pressable>
+      </CardGradient>
     </View>
   );
 }
@@ -746,7 +906,51 @@ function ServicesScreen({ onBook }) {
   );
 }
 
-function BookScreen({ from, to, service, phone, date, matchedRoute, onFrom, onTo, onService, onPhone, onDate, onSend, isSubmitting }) {
+function BookScreen({ from, to, pickupLocation, dropLocation, service, carCategory, phone, date, onFrom, onTo, onPickupLocation, onDropLocation, onService, onCarCategory, onPhone, onDate, onSend, isSubmitting }) {
+  const [pickerTarget, setPickerTarget] = useState(null);
+  const [routeDistanceKm, setRouteDistanceKm] = useState(null);
+  const [routeLoading, setRouteLoading] = useState(false);
+  const [routeError, setRouteError] = useState(null);
+
+  useEffect(() => {
+    if (!pickupLocation || !dropLocation) {
+      setRouteDistanceKm(null);
+      setRouteLoading(false);
+      setRouteError(null);
+      return undefined;
+    }
+
+    setRouteDistanceKm(null);
+    setRouteLoading(true);
+    setRouteError(null);
+    const controller = new AbortController();
+    const timer = setTimeout(async () => {
+      try {
+        const url = `https://router.project-osrm.org/route/v1/driving/${pickupLocation.longitude},${pickupLocation.latitude};${dropLocation.longitude},${dropLocation.latitude}?overview=false`;
+        const response = await fetch(url, { signal: controller.signal });
+        const result = await response.json();
+        if (!response.ok || result.code !== 'Ok' || !result.routes?.[0]) {
+          throw new Error('A road route could not be found for these pins.');
+        }
+        setRouteDistanceKm(Math.round((result.routes[0].distance / 1000) * 10) / 10);
+      } catch (error) {
+        if (error.name !== 'AbortError') {
+          setRouteDistanceKm(null);
+          setRouteError(error.message || 'Road distance is temporarily unavailable.');
+        }
+      } finally {
+        if (!controller.signal.aborted) setRouteLoading(false);
+      }
+    }, 350);
+
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
+  }, [pickupLocation?.latitude, pickupLocation?.longitude, dropLocation?.latitude, dropLocation?.longitude]);
+
+  const selectedFare = calculateFare(carCategory, routeDistanceKm, service);
+
   return (
     <View>
       <View style={styles.centerIntro}>
@@ -756,9 +960,14 @@ function BookScreen({ from, to, service, phone, date, matchedRoute, onFrom, onTo
       </View>
 
       <CardGradient style={styles.bookingPanel}>
-        <Field icon={MapPin} label="From" value={from} onChangeText={onFrom} placeholder="Pickup city" />
-        <Field icon={ArrowRight} label="To" value={to} onChangeText={onTo} placeholder="Destination" />
-        <SelectField icon={Sparkles} label="Service Type" value={service} options={['Outstation / Intercity', 'Wedding Car - Baraat / Bidai', 'Airport Transfer', 'Local City Ride', 'Tempo Traveller']} onValue={onService} />
+        <PinField label="Pickup" value={from} onPress={() => setPickerTarget('pickup')} />
+        <PinField label="Drop" value={to} onPress={() => setPickerTarget('drop')} />
+        <SelectField icon={Car} label="Choose vehicle" value={carCategory} options={[
+          { value: 'sedan', label: 'Sedan' },
+          { value: 'suv', label: 'SUV' },
+          { value: 'traveller', label: 'Tempo Traveller' }
+        ]} onValue={onCarCategory} />
+        <SelectField icon={Sparkles} label="Trip type" value={service} options={['Drop Only', 'Round Trip', 'Wedding Car - Baraat / Bidai', 'Airport Transfer', 'Local City Ride']} onValue={onService} />
         <View style={styles.twoCol}>
           <View style={styles.fieldBox}>
             <View style={styles.fieldLabelRow}><Calendar color={colors.primary} size={14} /><Text style={styles.fieldLabel}>Date</Text></View>
@@ -769,22 +978,41 @@ function BookScreen({ from, to, service, phone, date, matchedRoute, onFrom, onTo
             <TextInput value={phone} onChangeText={onPhone} keyboardType="phone-pad" placeholder="+91 ..." placeholderTextColor={colors.placeholder} style={styles.fieldInput} />
           </View>
         </View>
-        {matchedRoute ? <FareCard route={matchedRoute} /> : null}
-        <Pressable style={styles.whatsappButtonOuter} onPress={onSend} disabled={isSubmitting}>
+        <View style={styles.fareCard}>
+          <Text style={styles.fareLabel}>Route and fare</Text>
+          <Text style={styles.distanceValue}>{routeLoading ? 'Calculating road distance…' : routeDistanceKm !== null ? `${routeDistanceKm} km road distance` : 'Select pickup and drop pins to calculate distance'}</Text>
+          {routeError ? <Text style={styles.fareDisclaimer}>{routeError}</Text> : null}
+          <Text style={styles.farePrice}>{selectedFare !== null ? `Calculated fare: ₹${selectedFare}` : carCategory === 'traveller' ? 'Tempo Traveller: quote required; rate not provided.' : 'Fare will appear when the road route is available.'}</Text>
+          <Text style={styles.fareDisclaimer}>Calculated from the supplied rate card. Toll, parking, tax, and driver-allowance inclusion was not specified.</Text>
+        </View>
+        <Pressable style={styles.whatsappButtonOuter} onPress={() => onSend(routeDistanceKm)} disabled={isSubmitting}>
           <BrandGradient style={styles.whatsappButton}>
             <MessageCircle color={colors.primaryForeground} size={21} strokeWidth={2.5} />
             <Text style={styles.whatsappText}>{isSubmitting ? 'Requesting...' : 'Request booking'}</Text>
           </BrandGradient>
         </Pressable>
-        <Text style={styles.noHidden}>No hidden charges · Instant confirmation</Text>
+        <Text style={styles.noHidden}>Rate-card estimate · confirm inclusions before final confirmation</Text>
       </CardGradient>
+
+      <LocationPicker
+        visible={Boolean(pickerTarget)}
+        title={pickerTarget === 'pickup' ? 'Set pickup pin' : 'Set drop pin'}
+        value={pickerTarget === 'pickup' ? from : to}
+        initialLocation={pickerTarget === 'pickup' ? pickupLocation : dropLocation}
+        onClose={() => setPickerTarget(null)}
+        onSelect={(location) => {
+          if (pickerTarget === 'pickup') onPickupLocation(location);
+          else onDropLocation(location);
+          setPickerTarget(null);
+        }}
+      />
 
       <SectionTitle eyebrow="Quick pick" title="Popular routes" />
       {ROUTES.slice(0, 5).map((route) => (
-        <Pressable key={route.to} style={styles.routeButton} onPress={() => { onFrom(route.from); onTo(route.to); }}>
+        <Pressable key={route.to} style={styles.routeButton} onPress={() => { onFrom(route.from); onTo(route.to); onPickupLocation(null); onDropLocation(null); }}>
           <View>
             <Text style={styles.routeButtonMeta}>{route.from} to {route.to}</Text>
-            <Text style={styles.routeButtonFare}>Sedan <Text style={styles.yellowText}>₹{route.sedan}</Text></Text>
+            <Text style={styles.routeButtonFare}>Sedan ₹23/km · SUV ₹27/km · min ₹1,500</Text>
           </View>
           <ArrowRight color={colors.mutedForeground} size={18} />
         </Pressable>
@@ -803,7 +1031,7 @@ function AboutScreen({ lastTrip }) {
           <Stat value={`${BRAND.reviews}+`} label="Reviews" />
           <Stat value="24x7" label="Support" />
         </View>
-        <Text style={styles.aboutText}>SadakYatra offers wedding cars, airport transfers, outstation taxis, tempo travellers, and local city rides across Bihar.</Text>
+        <Text style={styles.aboutText}>SadakYatra offers wedding cars, airport transfers, Drop Only cabs, tempo travellers, and local city rides across Bihar.</Text>
         <Pressable style={styles.callWide} onPress={() => Linking.openURL(`tel:${BRAND.phone}`)}>
           <Phone color={colors.primaryForeground} size={18} />
           <Text style={styles.callWideText}>Call {BRAND.phone}</Text>
@@ -825,7 +1053,7 @@ function AboutScreen({ lastTrip }) {
   );
 }
 
-function BookingsScreen({ phone, bookings, loading, error, selectedBooking, events, onRefresh, onSelectBooking, onBack }) {
+function BookingsScreen({ phone, bookings, loading, error, selectedBooking, tracking, events, onRefresh, onSelectBooking, onBack }) {
   if (!phone) {
     return (
       <View style={styles.emptyStatePanel}>
@@ -876,6 +1104,20 @@ function BookingsScreen({ phone, bookings, loading, error, selectedBooking, even
           <Text style={styles.statusLabelLarge}>{selectedBooking.status}</Text>
           <Text style={styles.bookingDetail}>{formatDate(new Date(selectedBooking.trip_datetime))}</Text>
           <Text style={styles.bookingNote}>{selectedBooking.customer_note || 'No extra note'}</Text>
+          {tracking?.latitude != null && tracking?.longitude != null ? (
+            <View style={styles.trackingPanel}>
+              <MapView
+                style={styles.trackingMap}
+                initialRegion={{ latitude: tracking.latitude, longitude: tracking.longitude, latitudeDelta: 0.04, longitudeDelta: 0.04 }}
+                region={{ latitude: tracking.latitude, longitude: tracking.longitude, latitudeDelta: 0.04, longitudeDelta: 0.04 }}
+              >
+                <Marker coordinate={{ latitude: tracking.latitude, longitude: tracking.longitude }} title={tracking.driver_name || 'Assigned driver'} description={`${tracking.plate_no || ''} ${tracking.vehicle_model || ''}`} />
+              </MapView>
+              <Text style={styles.trackingCaption}>{tracking.driver_name} · {tracking.plate_no} · {tracking.driver_status?.replaceAll('_', ' ')}</Text>
+            </View>
+          ) : tracking?.driver_name ? (
+            <Text style={styles.emptySub}>Driver {tracking.driver_name} is assigned. Live location appears when the driver is online.</Text>
+          ) : null}
 
           <SectionTitle eyebrow="Status timeline" title="Updates" />
           {events.length === 0 ? (
@@ -906,39 +1148,167 @@ function Field({ icon: Icon, label, value, onChangeText, placeholder }) {
   );
 }
 
+function PinField({ label, value, onPress }) {
+  return (
+    <Pressable style={styles.pinField} onPress={onPress}>
+      <View style={styles.fieldLabelRow}>
+        <MapPin color={colors.primary} size={14} />
+        <Text style={styles.fieldLabel}>{label}</Text>
+      </View>
+      <View style={styles.pinFieldValueRow}>
+        <Text style={styles.pinFieldValue} numberOfLines={2}>{value || 'Choose a location on the map'}</Text>
+        <Text style={styles.pinFieldAction}>Set pin</Text>
+      </View>
+    </Pressable>
+  );
+}
+
+function LocationPicker({ visible, title, value, initialLocation, onClose, onSelect }) {
+  const { height } = useWindowDimensions();
+  const mapRef = useRef(null);
+  const [query, setQuery] = useState(value || '');
+  const [selectedLocation, setSelectedLocation] = useState(initialLocation || {
+    label: 'Muzaffarpur', latitude: 26.1209, longitude: 85.391
+  });
+  const [results, setResults] = useState([]);
+  const [searching, setSearching] = useState(false);
+  const [searchError, setSearchError] = useState(null);
+
+  useEffect(() => {
+    if (!visible) return;
+    const point = initialLocation || { label: value || 'Muzaffarpur', latitude: 26.1209, longitude: 85.391 };
+    setQuery(value || point.label || '');
+    setSelectedLocation(point);
+    setResults([]);
+    setSearchError(null);
+    mapRef.current?.animateToRegion({ latitude: point.latitude, longitude: point.longitude, latitudeDelta: 0.07, longitudeDelta: 0.07 });
+  }, [visible, initialLocation, value]);
+
+  async function searchPlaces() {
+    if (!query.trim()) return;
+    setSearching(true);
+    setSearchError(null);
+    try {
+      const url = `https://photon.komoot.io/api/?q=${encodeURIComponent(`${query.trim()}, Bihar, India`)}&lat=26.12&lon=85.39&limit=6`;
+      const response = await fetch(url);
+      if (!response.ok) throw new Error('Location search is temporarily unavailable.');
+      const data = await response.json();
+      setResults(data.features || []);
+      if (!data.features?.length) setSearchError('No matching places found. Move the map and place the pin manually.');
+    } catch (error) {
+      setSearchError(error.message || 'Location search is temporarily unavailable.');
+    } finally {
+      setSearching(false);
+    }
+  }
+
+  function labelForFeature(properties) {
+    return [...new Set([properties.name, properties.street, properties.city, properties.district, properties.state].filter(Boolean))].slice(0, 3).join(', ');
+  }
+
+  function chooseFeature(feature) {
+    const [longitude, latitude] = feature.geometry.coordinates;
+    const location = { label: labelForFeature(feature.properties) || 'Pinned location', latitude, longitude };
+    setSelectedLocation(location);
+    setQuery(location.label);
+    setResults([]);
+    mapRef.current?.animateToRegion({ latitude, longitude, latitudeDelta: 0.025, longitudeDelta: 0.025 }, 350);
+  }
+
+  async function setMapPin(coordinate) {
+    const location = { label: 'Pinned location', latitude: coordinate.latitude, longitude: coordinate.longitude };
+    setSelectedLocation(location);
+    try {
+      const response = await fetch(`https://photon.komoot.io/reverse?lon=${coordinate.longitude}&lat=${coordinate.latitude}`);
+      const data = await response.json();
+      const properties = data.features?.[0]?.properties;
+      if (properties) {
+        const label = labelForFeature(properties);
+        if (label) {
+          setSelectedLocation({ ...location, label });
+          setQuery(label);
+        }
+      }
+    } catch {
+      setQuery('Pinned location');
+    }
+  }
+
+  return (
+    <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
+      <SafeAreaView style={styles.locationPicker}>
+        <View style={styles.locationPickerHeader}>
+          <View style={styles.flex}>
+            <Text style={styles.locationPickerTitle}>{title}</Text>
+            <Text style={styles.locationPickerSubtitle}>Search a place, then adjust the pin precisely.</Text>
+          </View>
+          <Pressable style={styles.pickerClose} onPress={onClose} accessibilityLabel="Close map">
+            <Text style={styles.pickerCloseText}>Close</Text>
+          </Pressable>
+        </View>
+        <View style={styles.pickerSearchRow}>
+          <TextInput
+            value={query}
+            onChangeText={setQuery}
+            onSubmitEditing={searchPlaces}
+            returnKeyType="search"
+            placeholder="Search area, station, landmark"
+            placeholderTextColor={colors.placeholder}
+            style={styles.pickerSearchInput}
+          />
+          <Pressable style={styles.pickerSearchButton} onPress={searchPlaces} disabled={searching}>
+            <Search color={colors.primaryForeground} size={18} />
+          </Pressable>
+        </View>
+        {results.length > 0 ? (
+          <ScrollView style={styles.locationResults} keyboardShouldPersistTaps="handled">
+            {results.map((feature, index) => (
+              <Pressable key={`${feature.geometry.coordinates.join(',')}-${index}`} style={styles.locationResult} onPress={() => chooseFeature(feature)}>
+                <MapPin color={colors.primary} size={16} />
+                <Text style={styles.locationResultText}>{labelForFeature(feature.properties)}</Text>
+              </Pressable>
+            ))}
+          </ScrollView>
+        ) : null}
+        {searchError ? <Text style={styles.searchError}>{searchError}</Text> : null}
+        <MapView
+          ref={mapRef}
+          style={[styles.locationMap, { height: Math.max(260, height * 0.48) }]}
+          initialRegion={{ latitude: selectedLocation.latitude, longitude: selectedLocation.longitude, latitudeDelta: 0.07, longitudeDelta: 0.07 }}
+          onPress={(event) => setMapPin(event.nativeEvent.coordinate)}
+        >
+          <Marker
+            coordinate={{ latitude: selectedLocation.latitude, longitude: selectedLocation.longitude }}
+            draggable
+            title={selectedLocation.label}
+            onDragEnd={(event) => setMapPin(event.nativeEvent.coordinate)}
+          />
+        </MapView>
+        <View style={styles.pinConfirmRow}>
+          <Text style={styles.pinCoords}>{selectedLocation.latitude.toFixed(5)}, {selectedLocation.longitude.toFixed(5)}</Text>
+          <Pressable style={styles.pinConfirmButton} onPress={() => onSelect(selectedLocation)}>
+            <Text style={styles.pinConfirmText}>Use this pin</Text>
+          </Pressable>
+        </View>
+      </SafeAreaView>
+    </Modal>
+  );
+}
+
 function SelectField({ icon: Icon, label, value, options, onValue }) {
   return (
     <View style={styles.fieldBox}>
       <View style={styles.fieldLabelRow}><Icon color={colors.primary} size={14} /><Text style={styles.fieldLabel}>{label}</Text></View>
       <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-        {options.map((option) => (
-          <Pressable key={option} style={[styles.selectPill, value === option && styles.selectPillActive]} onPress={() => onValue(option)}>
-            <Text style={[styles.selectText, value === option && styles.selectTextActive]}>{option}</Text>
+        {options.map((option) => {
+          const optionValue = typeof option === 'string' ? option : option.value;
+          const optionLabel = typeof option === 'string' ? option : option.label;
+          return (
+          <Pressable key={optionValue} style={[styles.selectPill, value === optionValue && styles.selectPillActive]} onPress={() => onValue(optionValue)}>
+            <Text style={[styles.selectText, value === optionValue && styles.selectTextActive]}>{optionLabel}</Text>
           </Pressable>
-        ))}
+        );})}
       </ScrollView>
-    </View>
-  );
-}
-
-function FareCard({ route }) {
-  return (
-    <View style={styles.fareCard}>
-      <Text style={styles.fareLabel}>Estimated fare</Text>
-      <View style={styles.fareGrid}>
-        <FareItem label="Sedan" value={`₹${route.sedan}`} />
-        <FareItem label="SUV" value={`₹${route.suv}`} />
-        <FareItem label="Round Trip" value={`₹${route.rt}`} />
-      </View>
-    </View>
-  );
-}
-
-function FareItem({ label, value }) {
-  return (
-    <View style={styles.fareItem}>
-      <Text style={styles.fareItemLabel}>{label}</Text>
-      <Text style={styles.fareItemValue}>{value}</Text>
     </View>
   );
 }
@@ -949,7 +1319,7 @@ function RouteRow({ route, onPress }) {
       <View style={styles.clockIcon}><Clock color={colors.primary} size={18} /></View>
       <View style={styles.flex}>
         <Text style={styles.routeTitle}>{route.from} to {route.to}</Text>
-        <Text style={styles.routeMeta}>Sedan from <Text style={styles.yellowText}>₹{route.sedan}</Text> · RT ₹{route.rt}</Text>
+        <Text style={styles.routeMeta}>Sedan ₹23/km · SUV ₹27/km · minimum ₹1,500</Text>
       </View>
       <ChevronRight color={colors.mutedForeground} size={18} />
     </Pressable>
@@ -1125,6 +1495,7 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 10 },
     elevation: 8
   },
+  logoMark: { width: 38, height: 38, borderRadius: 11 },
   logoInitial: { color: colors.primaryForeground, fontSize: 20, fontWeight: '900' },
   headerText: { flex: 1 },
   logoTitle: { color: colors.text, fontSize: 16, fontWeight: '900', letterSpacing: -0.4 },
@@ -1213,6 +1584,10 @@ const styles = StyleSheet.create({
   priceText: { color: colors.text, fontSize: 15, fontWeight: '900' },
   priceUnit: { color: colors.muted, fontSize: 10, marginTop: 2 },
   fleetArticleList: { paddingHorizontal: 16, gap: 16 },
+  partnerSection: { marginTop: 10, paddingHorizontal: 16, paddingBottom: 20 },
+  partnerPanel: { borderRadius: 18, borderWidth: 1, borderColor: colors.border, padding: 12 },
+  partnerDisclosure: { color: colors.muted, fontSize: 11, lineHeight: 17, marginBottom: 12 },
+  partnerMessage: { color: colors.primary, fontSize: 12, lineHeight: 18, marginBottom: 10 },
   fleetArticle: {
     overflow: 'hidden',
     borderRadius: 24,
@@ -1320,6 +1695,9 @@ const styles = StyleSheet.create({
   backLink: { marginBottom: 10 },
   backLinkText: { color: colors.primary, fontSize: 13, fontWeight: '900' },
   bookingNote: { color: colors.muted, fontSize: 12, lineHeight: 18, marginTop: 10 },
+  trackingPanel: { marginTop: 10, overflow: 'hidden', borderRadius: 14, borderWidth: 1, borderColor: colors.border },
+  trackingMap: { width: '100%', height: 190 },
+  trackingCaption: { color: colors.text, backgroundColor: colors.surfaceElevated, padding: 10, fontSize: 11, fontWeight: '800' },
   timelineItem: { flexDirection: 'row', gap: 10, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: colors.border },
   timelineDot: { width: 10, height: 10, borderRadius: 5, backgroundColor: colors.primary, marginTop: 6 },
   timelineContent: { flex: 1, gap: 4 },
@@ -1376,6 +1754,10 @@ const styles = StyleSheet.create({
     elevation: 8
   },
   fieldBox: { borderRadius: 16, borderWidth: 1, borderColor: colors.border, backgroundColor: 'rgba(33,31,27,0.50)', padding: 12, marginBottom: 10 },
+  pinField: { borderRadius: 16, borderWidth: 1, borderColor: colors.border, backgroundColor: 'rgba(33,31,27,0.50)', padding: 12, marginBottom: 10 },
+  pinFieldValueRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 7 },
+  pinFieldValue: { color: colors.text, flex: 1, fontSize: 14, fontWeight: '700' },
+  pinFieldAction: { color: colors.primary, fontSize: 11, fontWeight: '900', textTransform: 'uppercase' },
   fieldLabelRow: { flexDirection: 'row', alignItems: 'center', gap: 7 },
   fieldLabel: { color: colors.yellow, fontSize: 10, textTransform: 'uppercase', letterSpacing: 1.2, fontWeight: '900' },
   fieldInput: { color: colors.text, padding: 0, marginTop: 6, fontSize: 14, fontWeight: '700' },
@@ -1387,10 +1769,31 @@ const styles = StyleSheet.create({
   twoCol: { flexDirection: 'row', gap: 10 },
   fareCard: { borderRadius: 18, borderWidth: 1, borderColor: 'rgba(246,206,0,0.30)', backgroundColor: 'rgba(246,206,0,0.10)', padding: 12, marginBottom: 10 },
   fareLabel: { color: colors.yellow, fontSize: 10, fontWeight: '900', textTransform: 'uppercase', letterSpacing: 1.2 },
+  distanceValue: { color: colors.text, fontSize: 16, fontWeight: '900', marginTop: 8 },
+  farePrice: { color: colors.yellow, fontSize: 14, fontWeight: '900', marginTop: 8 },
+  fareDisclaimer: { color: colors.muted, fontSize: 10, lineHeight: 15, marginTop: 6 },
   fareGrid: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 9 },
   fareItem: { alignItems: 'center', flex: 1 },
   fareItemLabel: { color: colors.muted, fontSize: 10 },
   fareItemValue: { color: colors.yellow, fontWeight: '900', marginTop: 2 },
+  locationPicker: { flex: 1, backgroundColor: colors.bg, paddingHorizontal: 14, paddingTop: 8 },
+  locationPickerHeader: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 10 },
+  locationPickerTitle: { color: colors.text, fontSize: 19, fontWeight: '900' },
+  locationPickerSubtitle: { color: colors.muted, fontSize: 11, marginTop: 3 },
+  pickerClose: { minHeight: 40, justifyContent: 'center', paddingHorizontal: 10 },
+  pickerCloseText: { color: colors.primary, fontWeight: '800' },
+  pickerSearchRow: { flexDirection: 'row', gap: 8, marginBottom: 8 },
+  pickerSearchInput: { minHeight: 46, flex: 1, borderRadius: 13, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface, color: colors.text, paddingHorizontal: 12, fontSize: 13 },
+  pickerSearchButton: { width: 46, height: 46, borderRadius: 13, backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center' },
+  locationResults: { maxHeight: 128, marginBottom: 8, borderRadius: 12, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface },
+  locationResult: { minHeight: 42, flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 10, borderBottomWidth: 1, borderBottomColor: colors.border },
+  locationResultText: { color: colors.text, flex: 1, fontSize: 12 },
+  searchError: { color: colors.muted, fontSize: 11, marginBottom: 8 },
+  locationMap: { width: '100%', borderRadius: 14, overflow: 'hidden' },
+  pinConfirmRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10, paddingVertical: 10 },
+  pinCoords: { color: colors.muted, flex: 1, fontSize: 10 },
+  pinConfirmButton: { minHeight: 44, borderRadius: 13, backgroundColor: colors.primary, paddingHorizontal: 16, justifyContent: 'center' },
+  pinConfirmText: { color: colors.primaryForeground, fontWeight: '900', fontSize: 13 },
   whatsappButtonOuter: {
     marginTop: 2,
     borderRadius: 17,
