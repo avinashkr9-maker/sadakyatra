@@ -1,6 +1,19 @@
 app/.expo/
 app/node_modules/
+app/.env
 backend/node_modules/
 backend/data.sqlite
 backend/data.sqlite-shm
 backend/data.sqlite-wal
+
+# Root dependencies (npm workspaces)
+node_modules/
+.expo/
+
+# Local databases
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+
+# Env files
+.env
