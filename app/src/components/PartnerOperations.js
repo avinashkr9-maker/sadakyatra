@@ -392,9 +392,9 @@ function AdminMode() {
           <Text style={styles.itemText}>{application.phone} · {application.vehicle_number} · {application.vehicle_category} {application.vehicle_model}</Text>
           <Text style={styles.itemMeta}>{application.city}: {application.operating_area} · Driver {application.driver_name}</Text>
           {[
-            ['rc', 'RC private object key'],
-            ['dl', 'DL private object key'],
-            ['insurance', 'Insurance private object key']
+            ['rc', 'RC document path (optional)'],
+            ['dl', 'DL document path (optional)'],
+            ['insurance', 'Insurance document path (optional)']
           ].map(([field, label]) => (
             <TextInput key={field} value={docs[application.id]?.[field] || ''} onChangeText={(value) => updateDoc(application.id, field, value)} placeholder={label} placeholderTextColor={palette.muted} autoCapitalize="none" style={styles.formInput} />
           ))}

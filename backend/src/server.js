@@ -500,9 +500,12 @@ app.patch('/admin/partners/applications/:id', requireAdmin, handle(async (req, r
 
 app.post('/admin/partners/applications/:id/approve', requireAdmin, handle(async (req, res) => {
   const id = Number(req.params.id);
-  const { phoneVerified, rcDocumentKey, dlDocumentKey, insuranceDocumentKey } = req.body;
-  const supabase = getSupabaseAdmin();
-  if (!supabase) return res.status(503).json({ error: 'Approval needs Supabase (private RC/DL/insurance storage). Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY on the backend.' });
+  const { phoneVerified } = req.body;
+  // Documents are optional for now; blank fields are treated as not provided.
+  const documentKey = (value) => (typeof value === 'string' && value.trim() ? value.trim() : null);
+  const rcDocumentKey = documentKey(req.body.rcDocumentKey);
+  const dlDocumentKey = documentKey(req.body.dlDocumentKey);
+  const insuranceDocumentKey = documentKey(req.body.insuranceDocumentKey);
   const application = await one('SELECT * FROM partner_applications WHERE id = $1', [id]);
   if (!application) return res.status(404).json({ error: 'Application not found' });
   if (application.status !== 'PENDING') {
@@ -512,16 +515,20 @@ app.post('/admin/partners/applications/:id/approve', requireAdmin, handle(async 
     return res.status(400).json({ error: 'Verify the partner phone before approval' });
   }
 
-  const documentKeys = [rcDocumentKey, dlDocumentKey, insuranceDocumentKey];
+  // Any document key that is given must point at an uploaded file for this application.
+  const documentKeys = [rcDocumentKey, dlDocumentKey, insuranceDocumentKey].filter(Boolean);
   const documentPrefix = `partners/applications/${application.application_ref}/`;
-  if (documentKeys.some((key) => typeof key !== 'string' || !key.startsWith(documentPrefix) || key.includes('..') || key.includes('\\'))) {
-    return res.status(400).json({ error: 'RC, DL, and insurance private document keys are required' });
+  if (documentKeys.some((key) => !key.startsWith(documentPrefix) || key.includes('..') || key.includes('\\'))) {
+    return res.status(400).json({ error: `Document paths must start with ${documentPrefix}` });
   }
-
-  const bucket = getPartnerDocumentsBucket();
-  for (const objectKey of documentKeys) {
-    const { error } = await supabase.storage.from(bucket).createSignedUrl(objectKey, 30);
-    if (error) return res.status(400).json({ error: 'A required RC, DL, or insurance document is missing from private storage' });
+  if (documentKeys.length) {
+    const supabase = getSupabaseAdmin();
+    if (!supabase) return res.status(503).json({ error: 'Checking documents needs Supabase storage. Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY on the backend.' });
+    const bucket = getPartnerDocumentsBucket();
+    for (const objectKey of documentKeys) {
+      const { error } = await supabase.storage.from(bucket).createSignedUrl(objectKey, 30);
+      if (error) return res.status(400).json({ error: `Document not found in private storage: ${objectKey}` });
+    }
   }
 
   const driverToken = randomBytes(32).toString('base64url');
