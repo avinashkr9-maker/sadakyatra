@@ -47,5 +47,4 @@ Customers only see the cab's position between driver acceptance and trip complet
 - Real mobile OTP is not configured. Until then, an admin must independently verify the applicant's phone before setting `phoneVerified: true`.
 - Document upload is not implemented. The approval guard checks `PARTNER_DOCUMENTS_PRIVATE=true`, `PARTNER_DOCUMENTS_BUCKET`, and object-key prefixes, but it does not upload files or verify that an object exists. Do not enable approval until a private object-storage adapter with authorization and existence checks is integrated.
 - The admin key and driver token are entered in the Fleet page and are not persisted there. Driver tokens do not yet have expiry/rotation UX.
-- The current backend stores data in SQLite. Render's free instance is not durable; use a persistent database/storage plan before accepting real partner documents or relying on dispatch data.
-- Configure a persistent production database and private document storage, add OTP, then deploy the backend and website together. The browser forms currently target `https://sadakyatra.onrender.com`.
+- Add OTP, then deploy the backend and website together. The browser forms currently target `https://sadakyatra.onrender.com`.

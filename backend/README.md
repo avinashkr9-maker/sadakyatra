@@ -4,24 +4,27 @@ A Node.js/Express backend for the SadakYatra cab booking service.
 
 ## Stack
 - Node.js + Express
-- SQLite (local file `data.sqlite`)
+- Supabase Postgres (bookings, partners, dispatch) via `pg`
+- Supabase Auth (admin sign-in) and Storage (private partner documents)
+
+## Database Setup (once per Supabase project)
+In the Supabase SQL Editor, run in order:
+1. `supabase/partner_schema.sql`
+2. `supabase/bookings_schema.sql`
+
+Both are safe to re-run.
 
 ## Run Locally
 1. `cd backend`
-2. `npm install`
-3. `npm run dev`
+2. Create `backend/.env` (git-ignored) with `DATABASE_URL`, `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` (see Environment below)
+3. `npm install`
+4. `npm run dev`
 
 Server starts at `http://localhost:4000`.
 
-## Deployment to Railway
+## Deployment (Render)
 
-1. Go to [Railway.app](https://railway.app) and sign up/login
-2. Click "New Project" → "Deploy from GitHub repo"
-3. Connect your GitHub repository
-4. Railway will automatically detect it's a Node.js app and deploy it
-5. The app will be available at the Railway-assigned URL
-
-The database will be automatically initialized on first deployment.
+The service runs at `https://sadakyatra.onrender.com`. Set the variables from Environment below under **Environment** in the Render dashboard. All data lives in Supabase, so redeploys and free-tier restarts lose nothing.
 
 ## Key Endpoints
 - `GET /health`
@@ -60,4 +63,6 @@ curl -X POST https://your-railway-url.up.railway.app/bookings \
 
 ## Environment
 - Node.js 24 or newer (required by `backend/package.json`)
-- Uses better-sqlite3 for fast SQLite operations
+- `DATABASE_URL` - Supabase **Transaction pooler** connection string (Connect button in the Supabase dashboard; IPv4-compatible, works from Render)
+- `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` - admin sign-in checks and private document storage
+- Optional: `ADMIN_API_KEY`, `GPS_WEBHOOK_SECRET`, `OFFER_TIMEOUT_SECONDS` (default 60), `DATABASE_POOL_SIZE` (default 5)
