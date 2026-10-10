@@ -49,6 +49,7 @@ create table if not exists public.booking_status_events (
 );
 
 alter table public.vehicles add column if not exists gps_device_id text;
+alter table public.drivers add column if not exists push_token text;
 create unique index if not exists vehicles_gps_device_idx on public.vehicles(gps_device_id) where gps_device_id is not null;
 
 create index if not exists bookings_status_idx on public.bookings(status);

@@ -4,6 +4,7 @@ import * as Location from 'expo-location';
 import * as SecureStore from 'expo-secure-store';
 import MapView, { Marker } from 'react-native-maps';
 import { partnerAdminRequest, partnerDriverRequest } from '../api/client';
+import { alertNewOffer, getDriverPushToken } from '../notifications';
 
 const CATEGORY_LABELS = { sedan: 'Sedan', suv: 'SUV', traveller: 'Tempo Traveller' };
 const DRIVER_TOKEN_KEY = 'sadakyatra.driverToken';
@@ -54,6 +55,9 @@ function DriverMode() {
   const [message, setMessage] = useState('');
   const [busy, setBusy] = useState(false);
   const locationSubscription = useRef(null);
+  const seenOffers = useRef(new Set());
+  // True once the backend can ring this phone with a real push; then skip the in-app alert.
+  const hasRemotePush = useRef(false);
 
   useEffect(() => {
     // Log the driver back in with the token saved on this phone.
@@ -72,7 +76,20 @@ function DriverMode() {
 
   async function refresh(auth = activeToken) {
     const result = await partnerDriverRequest('/driver/bookings', 'GET', undefined, auth);
-    setBookings(result.bookings || []);
+    const latest = result.bookings || [];
+    for (const booking of latest) {
+      if (booking.driver_status !== 'OFFERED' || seenOffers.current.has(booking.id)) continue;
+      seenOffers.current.add(booking.id);
+      if (!hasRemotePush.current) alertNewOffer(booking);
+    }
+    setBookings(latest);
+  }
+
+  async function registerPush(auth) {
+    const pushToken = await getDriverPushToken();
+    if (!pushToken) return;
+    await partnerDriverRequest('/driver/push-token', 'POST', { token: pushToken }, auth);
+    hasRemotePush.current = true;
   }
 
   async function startLocationSharing(auth) {
@@ -100,6 +117,7 @@ function DriverMode() {
       setActiveToken(auth);
       setToken('');
       await SecureStore.setItemAsync(DRIVER_TOKEN_KEY, auth).catch(() => {});
+      registerPush(auth).catch(() => {});
       await refresh(auth);
       if (me.driver.online) {
         await startLocationSharing(auth).catch(() => {});
@@ -115,6 +133,9 @@ function DriverMode() {
 
   async function logout() {
     if (online) await toggleOnline();
+    // Stop offers for this driver ringing this phone after logout.
+    await partnerDriverRequest('/driver/push-token', 'POST', { token: null }, activeToken).catch(() => {});
+    hasRemotePush.current = false;
     await SecureStore.deleteItemAsync(DRIVER_TOKEN_KEY).catch(() => {});
     setActiveToken('');
     setDriver(null);

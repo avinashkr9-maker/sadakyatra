@@ -663,9 +663,44 @@ function distanceKmBetween(lat1, lng1, lat2, lng2) {
   return 6371 * 2 * Math.asin(Math.sqrt(a));
 }
 
+// Alert the driver's phone (even when locked) through Expo's push service.
+// Best effort: dispatch never waits on or fails because of a push.
+async function sendOfferPush(bookingId, driverId) {
+  try {
+    const offer = await one(`
+      SELECT d.push_token, b.pickup_text, b.drop_text, b.car_category
+      FROM drivers d JOIN bookings b ON b.id = $1
+      WHERE d.id = $2 AND d.push_token IS NOT NULL
+    `, [bookingId, driverId]);
+    if (!offer) return;
+    const response = await fetch('https://exp.host/--/api/v2/push/send', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', accept: 'application/json' },
+      body: JSON.stringify({
+        to: offer.push_token,
+        title: 'New booking offer',
+        body: `${offer.pickup_text} → ${offer.drop_text} (${offer.car_category}). Respond within ${OFFER_TIMEOUT_SECONDS}s.`,
+        sound: 'default',
+        priority: 'high',
+        channelId: 'booking-offers',
+        ttl: OFFER_TIMEOUT_SECONDS,
+        data: { bookingId }
+      })
+    });
+    const result = (await response.json())?.data;
+    if (result?.details?.error === 'DeviceNotRegistered') {
+      await query('UPDATE drivers SET push_token = NULL WHERE id = $1 AND push_token = $2', [driverId, offer.push_token]);
+    } else if (result?.status === 'error') {
+      console.error('Offer push rejected', result.message);
+    }
+  } catch (error) {
+    console.error('Offer push failed', error.message);
+  }
+}
+
 // Locking the vehicle row stops two concurrent offers from grabbing the same cab.
-function offerBooking(bookingId, cab) {
-  return transaction(async (client) => {
+async function offerBooking(bookingId, cab) {
+  const offered = await transaction(async (client) => {
     await query("SELECT id FROM vehicles WHERE id = $1 FOR UPDATE", [cab.vehicle_id], client);
     const free = await one(`SELECT v.id FROM vehicles v WHERE v.id = $1 AND ${cabIsFreeSql}`, [cab.vehicle_id], client);
     if (!free) return false;
@@ -680,6 +715,8 @@ function offerBooking(bookingId, cab) {
       [bookingId, cab.driver_id], client);
     return true;
   });
+  if (offered) sendOfferPush(bookingId, cab.driver_id);
+  return offered;
 }
 
 function releaseOffer(bookingId, driverId) {
@@ -788,6 +825,20 @@ app.patch('/driver/presence', requireDriver, handle(async (req, res) => {
   }
   await runDispatchSweep();
   res.json({ online });
+}));
+
+// The driver app registers its Expo push token so offers can ring a locked phone.
+app.post('/driver/push-token', requireDriver, handle(async (req, res) => {
+  const { token } = req.body;
+  if (token !== null && (typeof token !== 'string' || !/^Expo(nent)?PushToken\[[^\]]{10,200}\]$/.test(token))) {
+    return res.status(400).json({ error: 'A valid Expo push token is required' });
+  }
+  // A phone belongs to one driver at a time: drop the token from anyone else who had it.
+  await transaction(async (client) => {
+    if (token) await query('UPDATE drivers SET push_token = NULL WHERE push_token = $1 AND id <> $2', [token, req.driver.id], client);
+    await query('UPDATE drivers SET push_token = $1 WHERE id = $2', [token, req.driver.id], client);
+  });
+  res.json({ registered: Boolean(token) });
 }));
 
 app.post('/driver/location', requireDriver, handle(async (req, res) => {
