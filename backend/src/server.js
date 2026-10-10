@@ -184,6 +184,16 @@ app.get('/health', (_req, res) => {
   res.json({ ok: true, service: 'sadakyatra-backend' });
 });
 
+// Reports only the error code (never the message) so connection problems can be diagnosed safely.
+app.get('/health/db', async (_req, res) => {
+  try {
+    await query('SELECT 1 FROM bookings LIMIT 1');
+    res.json({ ok: true });
+  } catch (error) {
+    res.status(503).json({ ok: false, code: error.code || error.name || 'UNKNOWN' });
+  }
+});
+
 app.get('/app/config', (_req, res) => {
   res.json(appConfig);
 });
