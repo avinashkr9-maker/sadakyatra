@@ -40,7 +40,9 @@ const migrations = [
   ['vehicles', 'rc_document_key', 'TEXT'],
   ['vehicles', 'dl_document_key', 'TEXT'],
   ['vehicles', 'insurance_document_key', 'TEXT'],
-  ['bookings', 'driver_status', 'TEXT']
+  ['bookings', 'driver_status', 'TEXT'],
+  ['bookings', 'fare_breakdown', 'TEXT'],
+  ['vehicles', 'gps_device_id', 'TEXT']
 ];
 const tableColumns = new Map();
 for (const [table, column, type] of migrations) {
@@ -59,6 +61,7 @@ db.prepare("UPDATE vehicles SET cab_ref = 'SY-CAB-' || printf('%06d', id) WHERE 
 db.exec(`
   CREATE INDEX IF NOT EXISTS idx_drivers_online ON drivers(is_online, is_active);
   CREATE INDEX IF NOT EXISTS idx_vehicles_partner ON vehicles(partner_id, active);
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_vehicles_gps_device ON vehicles(gps_device_id) WHERE gps_device_id IS NOT NULL;
 `);
 
 const insertFareRule = db.prepare(`

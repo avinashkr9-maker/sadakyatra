@@ -3,6 +3,7 @@ import cors from 'cors';
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { customAlphabet } from 'nanoid';
 import db from './db.js';
+import { getPartnerDocumentsBucket, getSupabaseAdmin } from './supabase.js';
 import { execSync } from 'node:child_process';
 
 execSync('node scripts/init-db.js', { stdio: 'inherit' });
@@ -17,40 +18,72 @@ app.use(express.json());
 const validCategories = new Set(['sedan', 'suv', 'traveller']);
 const validStatuses = new Set(['PENDING', 'CONFIRMED', 'ONGOING', 'COMPLETED', 'CANCELLED']);
 const validServiceTypes = new Set(['OUTSTATION', 'AIRPORT', 'WEDDING', 'LOCAL']);
-const fareRates = {
-  sedanPerKm: 23,
-  suvPerKm: 27,
+// Single source of truth for pricing. The app downloads this via /app/config
+// and falls back to an identical copy when the backend is unreachable.
+const fareConfig = {
+  categories: {
+    sedan: { perKm: 23, minimumFare: 1500, localFare: 1500 },
+    suv: { perKm: 27, minimumFare: 1500, localFare: 2000 },
+    traveller: { perKm: 35, minimumFare: 3500, localFare: 3500 }
+  },
   roundTripMultiplier: 1.75,
-  localSedanFare: 1500,
-  localSuvFare: 2000,
-  minimumFare: 1500
+  driverAllowance: 300,
+  tollPerKm: 1.5,
+  gstPercent: 5
 };
 const adminApiKey = process.env.ADMIN_API_KEY || '';
+const gpsWebhookSecret = process.env.GPS_WEBHOOK_SECRET || '';
 const partnerApplicationAttempts = new Map();
 
-function calculateFare(category, distanceKm, serviceType, roundTrip = false) {
-  if (category === 'traveller') return null;
-  if (serviceType === 'LOCAL') {
-    return category === 'sedan' ? fareRates.localSedanFare : fareRates.localSuvFare;
-  }
-  if (distanceKm == null || !Number.isFinite(distanceKm) || distanceKm <= 0) return null;
+function calculateFareBreakdown(category, distanceKm, serviceType, roundTrip = false) {
+  const rate = fareConfig.categories[category];
+  if (!rate) return null;
+  const isLocal = serviceType === 'LOCAL';
+  if (!isLocal && (distanceKm == null || !Number.isFinite(distanceKm) || distanceKm <= 0)) return null;
 
-  const perKmRate = category === 'sedan' ? fareRates.sedanPerKm : fareRates.suvPerKm;
-  const oneWayFare = Math.max(distanceKm * perKmRate, fareRates.minimumFare);
-  return Math.round(oneWayFare * (roundTrip ? fareRates.roundTripMultiplier : 1));
+  const baseFare = isLocal
+    ? rate.localFare
+    : Math.round(Math.max(distanceKm * rate.perKm, rate.minimumFare) * (roundTrip ? fareConfig.roundTripMultiplier : 1));
+  const driverAllowance = isLocal ? 0 : fareConfig.driverAllowance;
+  const tollAndParking = isLocal ? 0 : Math.round(distanceKm * fareConfig.tollPerKm * (roundTrip ? 2 : 1));
+  const subtotal = baseFare + driverAllowance + tollAndParking;
+  const gst = Math.round((subtotal * fareConfig.gstPercent) / 100);
+  return { baseFare, driverAllowance, tollAndParking, gst, total: subtotal + gst };
 }
 
-function requireAdmin(req, res, next) {
-  if (!adminApiKey) {
-    return res.status(503).json({ error: 'Admin API is not configured' });
+function calculateFare(category, distanceKm, serviceType, roundTrip = false) {
+  return calculateFareBreakdown(category, distanceKm, serviceType, roundTrip)?.total ?? null;
+}
+
+async function requireAdmin(req, res, next) {
+  const bearerToken = req.get('authorization')?.replace(/^Bearer\s+/i, '');
+  if (bearerToken) {
+    const supabase = getSupabaseAdmin();
+    if (!supabase) return res.status(503).json({ error: 'Supabase admin authentication is not configured' });
+    try {
+      const { data: authData, error: authError } = await supabase.auth.getUser(bearerToken);
+      if (authError || !authData.user) return res.status(401).json({ error: 'Invalid or expired admin session' });
+      const { data: admin, error: adminError } = await supabase
+        .from('admin_users')
+        .select('user_id, full_name')
+        .eq('user_id', authData.user.id)
+        .eq('active', true)
+        .maybeSingle();
+      if (adminError) return res.status(503).json({ error: 'Supabase admin roster is unavailable' });
+      if (!admin) return res.status(403).json({ error: 'This Supabase account is not an active SadakYatra admin' });
+      req.adminUser = { ...authData.user, adminProfile: admin };
+      return next();
+    } catch {
+      return res.status(503).json({ error: 'Unable to verify the Supabase admin session' });
+    }
   }
 
+  if (!adminApiKey) return res.status(401).json({ error: 'Supabase admin sign-in required' });
   const suppliedKey = Buffer.from(req.get('x-admin-api-key') || '');
   const expectedKey = Buffer.from(adminApiKey);
   if (suppliedKey.length !== expectedKey.length || !timingSafeEqual(suppliedKey, expectedKey)) {
     return res.status(401).json({ error: 'Admin authentication required' });
   }
-
   next();
 }
 
@@ -117,7 +150,7 @@ const appConfig = {
     },
     {
       q: 'Any hidden charges?',
-      a: 'Driver allowance is included. Tolls and state taxes are disclosed before final confirmation.'
+      a: 'No. The final payable price shown before booking already includes driver allowance, toll, parking, and GST.'
     },
     {
       q: 'Do you support wedding packages?',
@@ -126,9 +159,10 @@ const appConfig = {
   ],
   testimonials: [
     { name: 'Arvind Singh', rating: 5, text: 'Wedding car was decorated and arrived on time. Highly recommended.' },
-    { name: 'Pooja Verma', rating: 5, text: 'Outstation trip was smooth and driver was punctual and professional.' },
+    { name: 'Pooja Verma', rating: 5, text: 'Drop Only trip was smooth and driver was punctual and professional.' },
     { name: 'Ravi Thakur', rating: 5, text: 'Transparent rates, clean car, and safe experience.' }
-  ]
+  ],
+  fareConfig
 };
 
 app.get('/', (_req, res) => {
@@ -164,7 +198,7 @@ app.post('/auth/mock-login', (req, res) => {
   });
 });
 
-app.post('/partners/applications', limitPartnerApplications, (req, res) => {
+app.post('/partners/applications', limitPartnerApplications, async (req, res) => {
   const {
     fullName,
     phone: rawPhone,
@@ -198,32 +232,43 @@ app.post('/partners/applications', limitPartnerApplications, (req, res) => {
     return res.status(400).json({ error: 'Seats must be between 1 and 60' });
   }
 
+  const supabase = getSupabaseAdmin();
   const applicationRef = `SY-APP-${nano()}`;
-  const result = db.prepare(`
-    INSERT INTO partner_applications (
-      application_ref, full_name, phone, vehicle_number, vehicle_category,
-      vehicle_model, seats, driver_name, driver_phone, city, operating_area
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(
-    applicationRef,
-    fullName.trim(),
+  const acceptedMessage = 'Application received. The team will contact you to verify your phone and documents.';
+  if (!supabase) {
+    // Without Supabase, keep applications in the local database so none are lost.
+    const info = db.prepare(`
+      INSERT INTO partner_applications (
+        application_ref, full_name, phone, vehicle_number, vehicle_category, vehicle_model,
+        seats, driver_name, driver_phone, city, operating_area
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(applicationRef, fullName.trim(), phone, plate, vehicleCategory, vehicleModel.trim(),
+      seats == null ? null : Number(seats), driverName.trim(), driverPhone, city.trim(), operatingArea.trim());
+    return res.status(201).json({
+      application: { id: info.lastInsertRowid, applicationRef, status: 'PENDING', message: acceptedMessage }
+    });
+  }
+  const { data, error } = await supabase.from('partner_applications').insert({
+    application_ref: applicationRef,
+    full_name: fullName.trim(),
     phone,
-    plate,
-    vehicleCategory,
-    vehicleModel.trim(),
-    seats == null ? null : Number(seats),
-    driverName.trim(),
-    driverPhone,
-    city.trim(),
-    operatingArea.trim()
-  );
+    vehicle_number: plate,
+    vehicle_category: vehicleCategory,
+    vehicle_model: vehicleModel.trim(),
+    seats: seats == null ? null : Number(seats),
+    driver_name: driverName.trim(),
+    driver_phone: driverPhone,
+    city: city.trim(),
+    operating_area: operatingArea.trim()
+  }).select('id, application_ref, status').single();
 
+  if (error) return res.status(503).json({ error: 'Could not save partner application in Supabase. Apply the partner schema migration and check backend configuration.' });
   res.status(201).json({
     application: {
-      id: result.lastInsertRowid,
-      applicationRef,
-      status: 'PENDING',
-      message: 'Application received. The team will contact you to verify your phone and documents.'
+      id: data.id,
+      applicationRef: data.application_ref,
+      status: data.status,
+      message: acceptedMessage
     }
   });
 });
@@ -249,13 +294,14 @@ app.post('/pricing/estimate', (req, res) => {
   if (parsedDistance != null && (!Number.isFinite(parsedDistance) || parsedDistance <= 0)) {
     return res.status(400).json({ error: 'distanceKm must be a positive number' });
   }
+  const breakdown = calculateFareBreakdown(category, parsedDistance, serviceType, roundTrip);
   return res.json({
     category,
     distanceKm: parsedDistance,
     serviceType,
     roundTrip,
-    estimatedFare: calculateFare(category, parsedDistance, serviceType, roundTrip),
-    fareUnavailable: category === 'traveller'
+    estimatedFare: breakdown?.total ?? null,
+    breakdown
   });
 });
 
@@ -304,7 +350,7 @@ app.post('/bookings', (req, res) => {
     user = db.prepare('SELECT * FROM users WHERE id = ?').get(info.lastInsertRowid);
   }
 
-  const estimated = calculateFare(
+  const fareBreakdown = calculateFareBreakdown(
     carCategory,
     routeDistanceKm == null ? null : Number(routeDistanceKm),
     serviceType,
@@ -318,8 +364,8 @@ app.post('/bookings', (req, res) => {
     INSERT INTO bookings (
       booking_ref, customer_id, service_type, pickup_text, drop_text,
       pickup_latitude, pickup_longitude, drop_latitude, drop_longitude, route_distance_km, tracking_token_hash,
-      trip_datetime, car_category, estimated_fare, customer_note, status
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING')
+      trip_datetime, car_category, estimated_fare, fare_breakdown, customer_note, status
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING')
   `).run(
     bookingRef,
     user.id,
@@ -334,7 +380,8 @@ app.post('/bookings', (req, res) => {
     trackingTokenHash,
     tripDatetime,
     carCategory,
-    estimated,
+    fareBreakdown?.total ?? null,
+    fareBreakdown ? JSON.stringify(fareBreakdown) : null,
     customerNote || null
   );
 
@@ -343,6 +390,7 @@ app.post('/bookings', (req, res) => {
     VALUES (?, NULL, 'PENDING', ?, ?)
   `).run(info.lastInsertRowid, user.id, 'Booking created');
 
+  autoDispatch(info.lastInsertRowid);
   const booking = db.prepare('SELECT * FROM bookings WHERE id = ?').get(info.lastInsertRowid);
   res.status(201).json({ booking: publicBooking(booking), trackingToken });
 });
@@ -436,44 +484,54 @@ app.patch('/admin/bookings/:id/status', requireAdmin, (req, res) => {
   res.json({ booking: publicBooking(updated) });
 });
 
-app.get('/admin/partners/applications', requireAdmin, (req, res) => {
+app.get('/admin/partners/applications', requireAdmin, async (req, res) => {
   const status = String(req.query.status || 'PENDING');
   if (!['PENDING', 'APPROVED', 'REJECTED'].includes(status)) {
     return res.status(400).json({ error: 'Invalid application status' });
   }
-  const applications = db.prepare(`
-    SELECT * FROM partner_applications WHERE status = ? ORDER BY created_at ASC
-  `).all(status);
-  res.json({ applications });
+  const supabase = getSupabaseAdmin();
+  if (!supabase) {
+    const applications = db.prepare('SELECT * FROM partner_applications WHERE status = ? ORDER BY created_at ASC').all(status);
+    return res.json({ applications });
+  }
+  const { data, error } = await supabase.from('partner_applications').select('*').eq('status', status).order('created_at', { ascending: true });
+  if (error) return res.status(503).json({ error: 'Could not load partner applications from Supabase' });
+  res.json({ applications: data || [] });
 });
 
-app.patch('/admin/partners/applications/:id', requireAdmin, (req, res) => {
+app.patch('/admin/partners/applications/:id', requireAdmin, async (req, res) => {
   const id = Number(req.params.id);
   const { status, reviewNote } = req.body;
   if (status !== 'REJECTED') {
     return res.status(400).json({ error: 'Use the approval endpoint to approve applications' });
   }
-  const application = db.prepare('SELECT * FROM partner_applications WHERE id = ?').get(id);
-  if (!application) return res.status(404).json({ error: 'Application not found' });
-  if (application.status !== 'PENDING') {
-    return res.status(409).json({ error: 'Only pending applications can be rejected' });
+  const supabase = getSupabaseAdmin();
+  if (!supabase) {
+    const result = db.prepare(`
+      UPDATE partner_applications SET status = 'REJECTED', review_note = ?, reviewed_at = datetime('now')
+      WHERE id = ? AND status = 'PENDING'
+    `).run(String(reviewNote || '').slice(0, 500) || null, id);
+    if (!result.changes) return res.status(404).json({ error: 'Pending application not found' });
+    return res.json({ application: db.prepare('SELECT * FROM partner_applications WHERE id = ?').get(id) });
   }
-  db.prepare(`
-    UPDATE partner_applications
-    SET status = 'REJECTED', review_note = ?, reviewed_at = datetime('now')
-    WHERE id = ?
-  `).run(String(reviewNote || '').slice(0, 500) || null, id);
-  res.json({ application: db.prepare('SELECT * FROM partner_applications WHERE id = ?').get(id) });
+  const { data, error } = await supabase.from('partner_applications').update({
+    status: 'REJECTED',
+    review_note: String(reviewNote || '').slice(0, 500) || null,
+    reviewed_at: new Date().toISOString()
+  }).eq('id', id).eq('status', 'PENDING').select('*').maybeSingle();
+  if (error) return res.status(503).json({ error: 'Could not update the application in Supabase' });
+  if (!data) return res.status(404).json({ error: 'Pending application not found' });
+  res.json({ application: data });
 });
 
-app.post('/admin/partners/applications/:id/approve', requireAdmin, (req, res) => {
-  if (process.env.PARTNER_DOCUMENTS_PRIVATE !== 'true' || !process.env.PARTNER_DOCUMENTS_BUCKET) {
-    return res.status(503).json({ error: 'Private partner document storage is not configured' });
-  }
-
+app.post('/admin/partners/applications/:id/approve', requireAdmin, async (req, res) => {
   const id = Number(req.params.id);
   const { phoneVerified, rcDocumentKey, dlDocumentKey, insuranceDocumentKey } = req.body;
-  const application = db.prepare('SELECT * FROM partner_applications WHERE id = ?').get(id);
+  const supabase = getSupabaseAdmin();
+  if (!supabase) return res.status(503).json({ error: 'Approval needs Supabase (private RC/DL/insurance storage). Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY on the backend.' });
+  const { data: application, error: applicationError } = await supabase
+    .from('partner_applications').select('*').eq('id', id).maybeSingle();
+  if (applicationError) return res.status(503).json({ error: 'Could not read the Supabase application' });
   if (!application) return res.status(404).json({ error: 'Application not found' });
   if (application.status !== 'PENDING') {
     return res.status(409).json({ error: 'Only pending applications can be approved' });
@@ -488,69 +546,85 @@ app.post('/admin/partners/applications/:id/approve', requireAdmin, (req, res) =>
     return res.status(400).json({ error: 'RC, DL, and insurance private document keys are required' });
   }
 
-  const existingUser = db.prepare('SELECT * FROM users WHERE phone = ?').get(application.driver_phone);
-  if (existingUser) {
-    return res.status(409).json({ error: 'Driver phone is already registered; resolve the existing account first' });
+  const bucket = getPartnerDocumentsBucket();
+  for (const objectKey of documentKeys) {
+    const { error } = await supabase.storage.from(bucket).createSignedUrl(objectKey, 30);
+    if (error) return res.status(400).json({ error: 'A required RC, DL, or insurance document is missing from private storage' });
   }
-  const existingVehicle = db.prepare('SELECT id FROM vehicles WHERE plate_no = ?').get(application.vehicle_number);
-  if (existingVehicle) return res.status(409).json({ error: 'Vehicle registration is already in the fleet' });
 
   const driverToken = randomBytes(32).toString('base64url');
   const driverTokenHash = createHash('sha256').update(driverToken).digest('hex');
   const partnerRef = `SY-PARTNER-${nano()}`;
-  const createPartner = db.transaction(() => {
-    const partner = db.prepare(`
-      INSERT INTO partners (partner_ref, application_id, full_name, phone, city, operating_area)
-      VALUES (?, ?, ?, ?, ?, ?)
-    `).run(partnerRef, id, application.full_name, application.phone, application.city, application.operating_area);
-    const user = db.prepare(`
-      INSERT INTO users (role, full_name, phone) VALUES ('DRIVER', ?, ?)
-    `).run(application.driver_name, application.driver_phone);
-    const driver = db.prepare(`
-      INSERT INTO drivers (user_id, partner_id, driver_name, phone, access_token_hash)
-      VALUES (?, ?, ?, ?, ?)
-    `).run(user.lastInsertRowid, partner.lastInsertRowid, application.driver_name, application.driver_phone, driverTokenHash);
-    const vehicle = db.prepare(`
-      INSERT INTO vehicles (
-        plate_no, category, model, seats, partner_id, driver_id,
-        rc_document_key, dl_document_key, insurance_document_key
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      application.vehicle_number,
-      application.vehicle_category,
-      application.vehicle_model,
-      application.seats,
-      partner.lastInsertRowid,
-      driver.lastInsertRowid,
-      rcDocumentKey,
-      dlDocumentKey,
-      insuranceDocumentKey
-    );
-    const cabRef = `SY-CAB-${String(vehicle.lastInsertRowid).padStart(6, '0')}`;
-    db.prepare('UPDATE vehicles SET cab_ref = ? WHERE id = ?').run(cabRef, vehicle.lastInsertRowid);
-    db.prepare(`
-      UPDATE partner_applications
-      SET status = 'APPROVED', phone_verified = 1,
-          rc_document_key = ?, dl_document_key = ?, insurance_document_key = ?,
-          reviewed_at = datetime('now')
-      WHERE id = ?
-    `).run(rcDocumentKey, dlDocumentKey, insuranceDocumentKey, id);
-    return { partnerId: partner.lastInsertRowid, driverId: driver.lastInsertRowid, vehicleId: vehicle.lastInsertRowid, cabRef };
+  const { data: approved, error: approvalError } = await supabase.rpc('approve_partner_application', {
+    p_application_id: id,
+    p_partner_ref: partnerRef,
+    p_driver_token_hash: driverTokenHash,
+    p_rc_document_key: rcDocumentKey,
+    p_dl_document_key: dlDocumentKey,
+    p_insurance_document_key: insuranceDocumentKey
   });
+  if (approvalError) return res.status(409).json({ error: 'Supabase could not approve this application. Check duplicates, schema and phone verification.' });
 
-  const created = createPartner();
-  res.status(201).json({ ...created, partnerRef, driverAccessToken: driverToken });
+  try {
+    const mirror = db.transaction(() => {
+      db.prepare(`
+        INSERT OR IGNORE INTO partner_applications (
+          application_ref, full_name, phone, vehicle_number, vehicle_category, vehicle_model,
+          seats, driver_name, driver_phone, city, operating_area, phone_verified,
+          rc_document_key, dl_document_key, insurance_document_key, status, reviewed_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, 'APPROVED', datetime('now'))
+      `).run(application.application_ref, application.full_name, application.phone, application.vehicle_number,
+        application.vehicle_category, application.vehicle_model, application.seats, application.driver_name,
+        application.driver_phone, application.city, application.operating_area,
+        rcDocumentKey, dlDocumentKey, insuranceDocumentKey);
+      const localApplication = db.prepare('SELECT id FROM partner_applications WHERE application_ref = ?').get(application.application_ref);
+      const driverPhone = `partner-${application.driver_phone}`;
+      const user = db.prepare(`INSERT INTO users (role, full_name, phone) VALUES ('DRIVER', ?, ?)`)
+        .run(application.driver_name, driverPhone);
+      const localPartner = db.prepare(`
+        INSERT INTO partners (partner_ref, application_id, full_name, phone, city, operating_area)
+        VALUES (?, ?, ?, ?, ?, ?)
+      `).run(partnerRef, localApplication.id, application.full_name, application.phone, application.city, application.operating_area);
+      const localDriver = db.prepare(`
+        INSERT INTO drivers (user_id, partner_id, driver_name, phone, access_token_hash)
+        VALUES (?, ?, ?, ?, ?)
+      `).run(user.lastInsertRowid, localPartner.lastInsertRowid, application.driver_name, application.driver_phone, driverTokenHash);
+      const localVehicle = db.prepare(`
+        INSERT INTO vehicles (plate_no, category, model, seats, partner_id, driver_id, rc_document_key, dl_document_key, insurance_document_key)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(application.vehicle_number, application.vehicle_category, application.vehicle_model, application.seats,
+        localPartner.lastInsertRowid, localDriver.lastInsertRowid, rcDocumentKey, dlDocumentKey, insuranceDocumentKey);
+      const cabRef = `SY-CAB-${String(localVehicle.lastInsertRowid).padStart(6, '0')}`;
+      db.prepare('UPDATE vehicles SET cab_ref = ? WHERE id = ?').run(cabRef, localVehicle.lastInsertRowid);
+      return { localPartnerId: localPartner.lastInsertRowid, localDriverId: localDriver.lastInsertRowid, localVehicleId: localVehicle.lastInsertRowid, cabRef };
+    });
+    const localIds = mirror();
+    await supabase.from('partners').update({ backend_partner_id: localIds.localPartnerId }).eq('id', approved.partnerId);
+    await supabase.from('drivers').update({ backend_driver_id: localIds.localDriverId }).eq('id', approved.driverId);
+    await supabase.from('vehicles').update({ backend_vehicle_id: localIds.localVehicleId }).eq('id', approved.vehicleId);
+    res.status(201).json({ ...approved, partnerRef, cabRef: localIds.cabRef, driverAccessToken: driverToken });
+  } catch {
+    res.status(201).json({ ...approved, partnerRef, driverAccessToken: driverToken, mirrorWarning: 'Supabase approval succeeded but the booking-dispatch mirror needs repair' });
+  }
 });
 
 app.get('/admin/partners', requireAdmin, (_req, res) => {
   const partners = db.prepare(`
     SELECT p.id AS partner_id, p.partner_ref, p.full_name, p.phone, p.city, p.operating_area,
       p.active AS partner_active, v.id AS vehicle_id, v.cab_ref, v.plate_no, v.category, v.model, v.active AS vehicle_active,
-      d.id AS driver_id, d.driver_name, d.phone AS driver_phone, d.is_online,
-      d.latitude, d.longitude, d.location_updated_at
+      v.gps_device_id, d.id AS driver_id, d.driver_name, d.phone AS driver_phone, d.is_online,
+      d.latitude, d.longitude, d.location_updated_at,
+      current.booking_ref AS current_booking_ref, current.driver_status AS current_driver_status,
+      current.pickup_text AS current_pickup, current.drop_text AS current_drop
     FROM partners p
     LEFT JOIN vehicles v ON v.partner_id = p.id
     LEFT JOIN drivers d ON d.partner_id = p.id
+    LEFT JOIN bookings current ON current.id = (
+      SELECT b.id FROM bookings b
+      WHERE b.vehicle_id = v.id
+        AND (b.status IN ('CONFIRMED','ONGOING') OR (b.status = 'PENDING' AND b.driver_status = 'OFFERED'))
+      ORDER BY b.updated_at DESC LIMIT 1
+    )
     ORDER BY p.created_at DESC
   `).all();
   res.json({ partners });
@@ -577,57 +651,165 @@ app.patch('/admin/partners/:id', requireAdmin, (req, res) => {
 
 app.patch('/admin/vehicles/:id', requireAdmin, (req, res) => {
   const vehicleId = Number(req.params.id);
-  const { active } = req.body;
-  if (typeof active !== 'boolean') return res.status(400).json({ error: 'active must be a boolean' });
-  const result = db.prepare('UPDATE vehicles SET active = ? WHERE id = ?').run(Number(active), vehicleId);
-  if (!result.changes) return res.status(404).json({ error: 'Vehicle not found' });
-  res.json({ vehicle: { id: vehicleId, active } });
+  const { active, gpsDeviceId } = req.body;
+  if (active !== undefined && typeof active !== 'boolean') return res.status(400).json({ error: 'active must be a boolean' });
+  if (gpsDeviceId !== undefined && gpsDeviceId !== null && (typeof gpsDeviceId !== 'string' || !/^[A-Za-z0-9_.:-]{3,64}$/.test(gpsDeviceId.trim()))) {
+    return res.status(400).json({ error: 'GPS device ID must be 3-64 letters, digits, or . _ : -' });
+  }
+  if (active === undefined && gpsDeviceId === undefined) return res.status(400).json({ error: 'Nothing to update' });
+
+  const vehicle = db.prepare('SELECT id, active, gps_device_id FROM vehicles WHERE id = ?').get(vehicleId);
+  if (!vehicle) return res.status(404).json({ error: 'Vehicle not found' });
+  const nextActive = active === undefined ? vehicle.active : Number(active);
+  const nextDevice = gpsDeviceId === undefined ? vehicle.gps_device_id : (gpsDeviceId?.trim() || null);
+  try {
+    db.prepare('UPDATE vehicles SET active = ?, gps_device_id = ? WHERE id = ?').run(nextActive, nextDevice, vehicleId);
+  } catch (error) {
+    if (String(error.code).startsWith('SQLITE_CONSTRAINT')) return res.status(409).json({ error: 'This GPS device is already linked to another cab' });
+    throw error;
+  }
+  res.json({ vehicle: { id: vehicleId, active: Boolean(nextActive), gpsDeviceId: nextDevice } });
 });
+
+// Option B: a GPS tracker provider (or a small relay polling the provider's API)
+// pushes positions here. The device ID must first be linked to a cab by an admin.
+app.post('/integrations/gps/location', (req, res) => {
+  if (!gpsWebhookSecret) return res.status(503).json({ error: 'GPS tracker integration is not configured' });
+  const supplied = Buffer.from(req.get('x-gps-webhook-secret') || '');
+  const expected = Buffer.from(gpsWebhookSecret);
+  if (supplied.length !== expected.length || !timingSafeEqual(supplied, expected)) {
+    return res.status(401).json({ error: 'Invalid GPS webhook secret' });
+  }
+  const { deviceId, latitude, longitude } = req.body;
+  const lat = Number(latitude);
+  const lng = Number(longitude);
+  if (typeof deviceId !== 'string' || !deviceId.trim()) return res.status(400).json({ error: 'deviceId is required' });
+  if (!Number.isFinite(lat) || lat < -90 || lat > 90 || !Number.isFinite(lng) || lng < -180 || lng > 180) {
+    return res.status(400).json({ error: 'Valid latitude and longitude are required' });
+  }
+  const vehicle = db.prepare(`
+    SELECT v.driver_id FROM vehicles v
+    JOIN partners p ON p.id = v.partner_id AND p.active = 1
+    WHERE v.gps_device_id = ? AND v.active = 1
+  `).get(deviceId.trim());
+  if (!vehicle?.driver_id) return res.status(404).json({ error: 'No active cab is linked to this GPS device' });
+  db.prepare(`
+    UPDATE drivers SET latitude = ?, longitude = ?, location_updated_at = datetime('now') WHERE id = ?
+  `).run(lat, lng, vehicle.driver_id);
+  res.json({ ok: true });
+});
+
+// ---- Dispatch -------------------------------------------------------------
+// A cab is available when its partner, vehicle and driver are active, the
+// driver is online, and it holds no open offer or unfinished trip.
+const OFFER_TIMEOUT_SECONDS = Number(process.env.OFFER_TIMEOUT_SECONDS || 60);
+const availableCabsSql = `
+  SELECT v.id AS vehicle_id, d.id AS driver_id, d.latitude, d.longitude
+  FROM vehicles v
+  JOIN partners p ON p.id = v.partner_id AND p.active = 1
+  JOIN drivers d ON d.id = v.driver_id AND d.is_active = 1 AND d.is_online = 1
+  WHERE v.active = 1 AND v.category = ?
+    AND NOT EXISTS (
+      SELECT 1 FROM bookings assigned
+      WHERE assigned.vehicle_id = v.id
+        AND (assigned.status IN ('CONFIRMED','ONGOING')
+          OR (assigned.status = 'PENDING' AND assigned.driver_status = 'OFFERED'))
+    )
+`;
+
+function distanceKmBetween(lat1, lng1, lat2, lng2) {
+  const toRad = (deg) => (deg * Math.PI) / 180;
+  const a = Math.sin(toRad(lat2 - lat1) / 2) ** 2 +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(toRad(lng2 - lng1) / 2) ** 2;
+  return 6371 * 2 * Math.asin(Math.sqrt(a));
+}
+
+const offerBooking = db.transaction((bookingId, cab) => {
+  const result = db.prepare(`
+    UPDATE bookings
+    SET vehicle_id = ?, driver_id = ?, driver_status = 'OFFERED', updated_at = datetime('now')
+    WHERE id = ? AND status = 'PENDING' AND driver_id IS NULL
+  `).run(cab.vehicle_id, cab.driver_id, bookingId);
+  if (!result.changes) return false;
+  db.prepare(`INSERT INTO driver_status_events (booking_id, driver_id, status) VALUES (?, ?, 'OFFERED')`)
+    .run(bookingId, cab.driver_id);
+  return true;
+});
+
+const releaseOffer = db.transaction((bookingId, driverId) => {
+  const result = db.prepare(`
+    UPDATE bookings SET driver_id = NULL, vehicle_id = NULL, driver_status = 'BOOKING_REJECTED', updated_at = datetime('now')
+    WHERE id = ? AND driver_id = ? AND status = 'PENDING' AND driver_status = 'OFFERED'
+  `).run(bookingId, driverId);
+  if (result.changes) {
+    db.prepare(`INSERT INTO driver_status_events (booking_id, driver_id, status) VALUES (?, ?, 'BOOKING_REJECTED')`)
+      .run(bookingId, driverId);
+  }
+  return result.changes > 0;
+});
+
+// Offer a pending booking to the nearest available cab that hasn't already
+// declined it. Cabs without a known location are tried after located ones.
+function autoDispatch(bookingId) {
+  const booking = db.prepare('SELECT * FROM bookings WHERE id = ?').get(bookingId);
+  if (!booking || booking.status !== 'PENDING' || booking.driver_id) return false;
+  const declined = new Set(db.prepare(`
+    SELECT driver_id FROM driver_status_events WHERE booking_id = ? AND status = 'BOOKING_REJECTED'
+  `).all(bookingId).map((row) => row.driver_id));
+  const hasPickup = booking.pickup_latitude != null && booking.pickup_longitude != null;
+  const candidates = db.prepare(availableCabsSql).all(booking.car_category)
+    .filter((cab) => !declined.has(cab.driver_id))
+    .map((cab) => ({
+      ...cab,
+      distance: hasPickup && cab.latitude != null
+        ? distanceKmBetween(booking.pickup_latitude, booking.pickup_longitude, cab.latitude, cab.longitude)
+        : Infinity
+    }))
+    .sort((a, b) => a.distance - b.distance);
+  return candidates.length ? offerBooking(bookingId, candidates[0]) : false;
+}
+
+// Expire unanswered offers, then try to place every waiting booking.
+function runDispatchSweep() {
+  try {
+    const expired = db.prepare(`
+      SELECT id, driver_id FROM bookings
+      WHERE status = 'PENDING' AND driver_status = 'OFFERED'
+        AND datetime(updated_at) <= datetime('now', ?)
+    `).all(`-${OFFER_TIMEOUT_SECONDS} seconds`);
+    for (const offer of expired) releaseOffer(offer.id, offer.driver_id);
+    const waiting = db.prepare(`
+      SELECT id FROM bookings WHERE status = 'PENDING' AND driver_id IS NULL
+      ORDER BY datetime(trip_datetime) ASC
+    `).all();
+    for (const booking of waiting) autoDispatch(booking.id);
+  } catch (error) {
+    console.error('Dispatch sweep failed', error);
+  }
+}
+setInterval(runDispatchSweep, 10_000).unref();
 
 app.post('/admin/bookings/:id/assign', requireAdmin, (req, res) => {
   const bookingId = Number(req.params.id);
   const vehicleId = Number(req.body.vehicleId);
   if (!Number.isInteger(vehicleId) || vehicleId < 1) {
-    return res.status(400).json({ error: 'A valid vehicleId is required' });
+    return res.status(400).json({ error: 'Choose a cab first' });
   }
   const booking = db.prepare('SELECT * FROM bookings WHERE id = ?').get(bookingId);
   if (!booking) return res.status(404).json({ error: 'Booking not found' });
   if (booking.status !== 'PENDING') {
     return res.status(409).json({ error: 'Only pending bookings can be assigned' });
   }
-  if (booking.driver_id || booking.vehicle_id) {
-    return res.status(409).json({ error: 'Booking already has a cab offer' });
+  const cab = db.prepare(`${availableCabsSql} AND v.id = ?`).get(booking.car_category, vehicleId);
+  if (!cab) {
+    return res.status(409).json({ error: 'This cab is offline, busy with another booking, or a different vehicle type' });
   }
-
-  const vehicle = db.prepare(`
-    SELECT v.id, d.id AS driver_id
-    FROM vehicles v
-    JOIN partners p ON p.id = v.partner_id AND p.active = 1
-    JOIN drivers d ON d.id = v.driver_id AND d.is_active = 1 AND d.is_online = 1
-    WHERE v.id = ? AND v.active = 1 AND v.category = ?
-      AND NOT EXISTS (
-        SELECT 1 FROM bookings assigned
-        WHERE assigned.vehicle_id = v.id
-          AND (assigned.status IN ('CONFIRMED','ONGOING')
-            OR (assigned.status = 'PENDING' AND assigned.driver_status = 'OFFERED'))
-      )
-  `).get(vehicleId, booking.car_category);
-  if (!vehicle) {
-    return res.status(409).json({ error: 'Vehicle must match the requested category and have an online, available driver' });
+  // Admin choice overrides an automatic offer that is still waiting.
+  if (booking.driver_id) {
+    if (booking.driver_status !== 'OFFERED') return res.status(409).json({ error: 'A driver has already accepted this booking' });
+    releaseOffer(bookingId, booking.driver_id);
   }
-
-  const assign = db.transaction(() => {
-    db.prepare(`
-      UPDATE bookings
-      SET vehicle_id = ?, driver_id = ?, driver_status = 'OFFERED', updated_at = datetime('now')
-      WHERE id = ? AND status = 'PENDING'
-    `).run(vehicle.id, vehicle.driver_id, bookingId);
-    db.prepare(`
-      INSERT INTO driver_status_events (booking_id, driver_id, status)
-      VALUES (?, ?, 'OFFERED')
-    `).run(bookingId, vehicle.driver_id);
-  });
-  assign();
+  if (!offerBooking(bookingId, cab)) return res.status(409).json({ error: 'Booking could not be offered; refresh and try again' });
   res.json({ booking: publicBooking(db.prepare('SELECT * FROM bookings WHERE id = ?').get(bookingId)) });
 });
 
@@ -644,6 +826,11 @@ app.patch('/driver/presence', requireDriver, (req, res) => {
         location_updated_at = CASE WHEN ? = 0 THEN NULL ELSE location_updated_at END
     WHERE id = ?
   `).run(Number(online), Number(online), Number(online), Number(online), req.driver.id);
+  if (!online) {
+    const offers = db.prepare(`SELECT id FROM bookings WHERE driver_id = ? AND status = 'PENDING' AND driver_status = 'OFFERED'`).all(req.driver.id);
+    for (const offer of offers) releaseOffer(offer.id, req.driver.id);
+  }
+  runDispatchSweep();
   res.json({ online });
 });
 
@@ -660,6 +847,11 @@ app.post('/driver/location', requireDriver, (req, res) => {
     WHERE id = ?
   `).run(latitude, longitude, req.driver.id);
   res.json({ latitude, longitude, updatedAt: new Date().toISOString() });
+});
+
+app.get('/driver/me', requireDriver, (req, res) => {
+  const cab = db.prepare('SELECT cab_ref, plate_no, category, model FROM vehicles WHERE driver_id = ?').get(req.driver.id);
+  res.json({ driver: { name: req.driver.driver_name, phone: req.driver.phone, online: Boolean(req.driver.is_online), cab } });
 });
 
 app.get('/driver/bookings', requireDriver, (req, res) => {
@@ -686,18 +878,9 @@ app.patch('/driver/bookings/:id/response', requireDriver, (req, res) => {
   }
 
   if (decision === 'REJECT') {
-    const rejectOffer = db.transaction(() => {
-      db.prepare(`
-        UPDATE bookings SET driver_id = NULL, vehicle_id = NULL, driver_status = 'BOOKING_REJECTED', updated_at = datetime('now')
-        WHERE id = ? AND driver_id = ? AND driver_status = 'OFFERED'
-      `).run(bookingId, req.driver.id);
-      db.prepare(`
-        INSERT INTO driver_status_events (booking_id, driver_id, status)
-        VALUES (?, ?, 'BOOKING_REJECTED')
-      `).run(bookingId, req.driver.id);
-    });
-    rejectOffer();
-    return res.json({ accepted: false, booking: publicBooking(db.prepare('SELECT * FROM bookings WHERE id = ?').get(bookingId)) });
+    releaseOffer(bookingId, req.driver.id);
+    runDispatchSweep();
+    return res.json({ accepted: false });
   }
 
   const acceptOffer = db.transaction(() => {
@@ -749,6 +932,7 @@ app.patch('/driver/bookings/:id/status', requireDriver, (req, res) => {
     }
   });
   updateStatus();
+  if (status === 'TRIP_COMPLETED') runDispatchSweep();
   res.json({ booking: publicBooking(db.prepare('SELECT * FROM bookings WHERE id = ?').get(bookingId)) });
 });
 
@@ -765,17 +949,21 @@ app.get('/bookings/:id/tracking', (req, res) => {
   }
   const tracking = db.prepare(`
     SELECT b.id, b.booking_ref, b.status, b.driver_status, b.car_category,
-      d.driver_name, v.plate_no, v.model AS vehicle_model,
-      CASE WHEN d.is_online = 1 THEN d.latitude ELSE NULL END AS latitude,
-      CASE WHEN d.is_online = 1 THEN d.longitude ELSE NULL END AS longitude,
-      CASE WHEN d.is_online = 1 THEN d.location_updated_at ELSE NULL END AS location_updated_at
+      b.pickup_latitude, b.pickup_longitude, b.drop_latitude, b.drop_longitude,
+      d.driver_name, v.plate_no, v.model AS vehicle_model, v.cab_ref,
+      CASE WHEN b.driver_status IN ('BOOKING_ACCEPTED','GOING_TO_PICKUP','ARRIVED','TRIP_STARTED') THEN d.phone ELSE NULL END AS driver_phone,
+      CASE WHEN d.is_online = 1 OR v.gps_device_id IS NOT NULL THEN d.latitude ELSE NULL END AS latitude,
+      CASE WHEN d.is_online = 1 OR v.gps_device_id IS NOT NULL THEN d.longitude ELSE NULL END AS longitude,
+      CASE WHEN d.is_online = 1 OR v.gps_device_id IS NOT NULL THEN d.location_updated_at ELSE NULL END AS location_updated_at
     FROM bookings b
-    JOIN users u ON u.id = b.customer_id
     LEFT JOIN drivers d ON d.id = b.driver_id
     LEFT JOIN vehicles v ON v.id = b.vehicle_id
     WHERE b.id = ?
   `).get(Number(req.params.id));
   if (!tracking) return res.status(404).json({ error: 'Booking not found' });
+  // Hide the cab's position until the driver has accepted, and after the trip ends.
+  const live = ['BOOKING_ACCEPTED', 'GOING_TO_PICKUP', 'ARRIVED', 'TRIP_STARTED'].includes(tracking.driver_status);
+  if (!live) Object.assign(tracking, { latitude: null, longitude: null, location_updated_at: null });
   res.json({ tracking });
 });
 

@@ -28,6 +28,20 @@ The Fleet page's Driver mode accepts the one-time token, runs in a mobile HTTPS 
 
 The customer app receives a one-time tracking token when creating a booking. Live tracking requires that token in `x-booking-tracking-token`; the database hash is removed from all booking responses. The app currently keeps this token only for its active session.
 
+## Hardware GPS Trackers (Option B)
+
+A tracker's number alone gives no location; the tracker provider must push positions (directly via webhook, or through a small relay that polls the provider's API).
+
+1. Set `GPS_WEBHOOK_SECRET` on the backend.
+2. In Admin mode, enter the tracker's device ID on the cab and tap Save (`PATCH /admin/vehicles/:id` with `gpsDeviceId`).
+3. The provider/relay calls `POST /integrations/gps/location` with header `x-gps-webhook-secret` and body `{ "deviceId", "latitude", "longitude" }`.
+
+Customers only see the cab's position between driver acceptance and trip completion.
+
+## Pricing
+
+`fareConfig` in `src/server.js` is the single place to change per-km rates, minimum fares, driver allowance, toll/parking per km, and GST. The app downloads it from `/app/config`; keep the offline copy (`DEFAULT_FARE_CONFIG` in `app/App.js`) in sync.
+
 ## Required Production Work
 
 - Real mobile OTP is not configured. Until then, an admin must independently verify the applicant's phone before setting `phoneVerified: true`.
