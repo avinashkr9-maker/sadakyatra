@@ -104,27 +104,35 @@ async function request(path, options = {}, timeoutMs = 8000) {
     throw err;
   }
 
+  const { headers: extraHeaders, skipAuth, ...fetchOptions } = options;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   const headers = {
     'Content-Type': 'application/json',
-    ...(options.headers || {})
+    ...(extraHeaders || {})
   };
-  if (authToken) headers.Authorization = `Bearer ${authToken}`;
+  if (authToken && !skipAuth && !headers.Authorization) headers.Authorization = `Bearer ${authToken}`;
 
   try {
+    // fetchOptions is spread first so it can never replace the merged headers
+    // (that dropped Content-Type and broke every driver/admin JSON body).
     const res = await fetch(`${base}${path}`, {
+      ...fetchOptions,
       headers,
-      signal: controller.signal,
-      ...options
+      signal: controller.signal
     });
     clearTimeout(timer);
     const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
+    if (!res.ok) {
+      const httpError = new Error(data.error || `Request failed (${res.status})`);
+      httpError.status = res.status;
+      throw httpError;
+    }
     return data;
   } catch (err) {
     clearTimeout(timer);
-    resolvedBase = null; // cached base mar gaya, agli baar dobara dhoondo
+    // Sirf network fail par base bhoolo; 4xx/5xx ka matlab server zinda hai.
+    if (!err.status) resolvedBase = null;
     throw err;
   }
 }
@@ -161,7 +169,25 @@ export function getBooking(id) {
 }
 export function getBookingTracking(id, trackingToken) {
   return request(`/bookings/${id}/tracking`, {
+    skipAuth: true,
     headers: { 'x-booking-tracking-token': trackingToken }
+  });
+}
+export function partnerDriverRequest(path, method, body, token) {
+  return request(path, {
+    method,
+    headers: { Authorization: `Bearer ${token}` },
+    ...(body === undefined ? {} : { body: JSON.stringify(body) })
+  });
+}
+export function partnerAdminRequest(path, method, body, adminApiKey) {
+  // The backend reads a Bearer token as a Supabase admin session, so the
+  // admin API key must travel in its own header.
+  return request(path, {
+    method,
+    skipAuth: true,
+    headers: { 'x-admin-api-key': adminApiKey },
+    ...(body === undefined ? {} : { body: JSON.stringify(body) })
   });
 }
 export function cancelBooking(id, phone, note) {
