@@ -31,6 +31,12 @@ export function setAuthToken(token) {
   authToken = token;
 }
 
+// Called when the server says the saved login is no longer valid.
+let onSessionExpired = null;
+export function setSessionExpiredHandler(handler) {
+  onSessionExpired = handler;
+}
+
 function candidateBases() {
   return [
     manualBase,
@@ -126,6 +132,7 @@ async function request(path, options = {}, timeoutMs = 8000) {
     if (!res.ok) {
       const httpError = new Error(data.error || `Request failed (${res.status})`);
       httpError.status = res.status;
+      if (res.status === 401 && headers.Authorization && onSessionExpired) onSessionExpired();
       throw httpError;
     }
     return data;
@@ -143,11 +150,20 @@ export function health() {
 export function getAppConfig() {
   return request('/app/config');
 }
-export function login(phone, fullName) {
-  return request('/auth/mock-login', {
-    method: 'POST',
-    body: JSON.stringify({ phone, fullName })
-  });
+export function requestOtp(phone) {
+  return request('/auth/otp/request', { method: 'POST', skipAuth: true, body: JSON.stringify({ phone }) }, 20000);
+}
+export function verifyOtp(phone, code) {
+  return request('/auth/otp/verify', { method: 'POST', skipAuth: true, body: JSON.stringify({ phone, code }) }, 20000);
+}
+export function getMe() {
+  return request('/me');
+}
+export function updateMe(profile) {
+  return request('/me', { method: 'PATCH', body: JSON.stringify(profile) });
+}
+export function logoutSession() {
+  return request('/auth/logout', { method: 'POST' });
 }
 export function estimateFare(category, distanceKm, serviceType = 'OUTSTATION', roundTrip = false) {
   return request('/pricing/estimate', {
@@ -161,35 +177,22 @@ export function createBooking(payload) {
 export function submitPartnerApplication(payload) {
   return request('/partners/applications', { method: 'POST', body: JSON.stringify(payload) });
 }
-export function listBookings(phone) {
-  return request(`/bookings?phone=${encodeURIComponent(phone)}`);
+export function listBookings() {
+  return request('/bookings');
 }
 export function getBooking(id) {
   return request(`/bookings/${id}`);
 }
-export function getBookingTracking(id, trackingToken) {
-  return request(`/bookings/${id}/tracking`, {
-    skipAuth: true,
-    headers: { 'x-booking-tracking-token': trackingToken }
-  });
+export function getBookingTracking(id) {
+  return request(`/bookings/${id}/tracking`);
 }
-export function partnerDriverRequest(path, method, body, token) {
+export function cancelBooking(id, note) {
+  return request(`/bookings/${id}/cancel`, { method: 'POST', body: JSON.stringify({ note }) });
+}
+// Driver, vehicle-owner and admin screens: all use the logged-in session.
+export function apiRequest(path, method = 'GET', body) {
   return request(path, {
     method,
-    headers: { Authorization: `Bearer ${token}` },
     ...(body === undefined ? {} : { body: JSON.stringify(body) })
   });
-}
-export function partnerAdminRequest(path, method, body, adminApiKey) {
-  // The backend reads a Bearer token as a Supabase admin session, so the
-  // admin API key must travel in its own header.
-  return request(path, {
-    method,
-    skipAuth: true,
-    headers: { 'x-admin-api-key': adminApiKey },
-    ...(body === undefined ? {} : { body: JSON.stringify(body) })
-  });
-}
-export function cancelBooking(id, phone, note) {
-  return request(`/bookings/${id}/cancel`, { method: 'POST', body: JSON.stringify({ phone, note }) });
 }

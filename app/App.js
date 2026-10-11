@@ -20,16 +20,20 @@ import {
 import MapView, { Marker } from 'react-native-maps';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Location from 'expo-location';
-import PartnerOperations from './src/components/PartnerOperations';
+import { AdminDashboard, DriverDashboard, OwnerFleet, signOutDriver } from './src/components/PartnerOperations';
+import {
+  LoadingScreen, OtpLoginScreen, PartnerSignupScreen, PartnerStatusScreen, ProfileScreen, RoleShell, VIEW_LABELS, WelcomeScreen
+} from './src/components/AuthFlow';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as SecureStore from 'expo-secure-store';
 import {
   getAppConfig,
-  login,
+  getMe,
+  logoutSession,
   setAuthToken,
+  setSessionExpiredHandler,
   setBaseUrl,
   createBooking,
-  submitPartnerApplication,
   listBookings,
   getBooking,
   getBookingTracking,
@@ -87,18 +91,12 @@ const DEFAULT_FARE_CONFIG = {
   gstPercent: 5
 };
 
-const TRACKING_TOKENS_KEY = 'sadakyatra.trackingTokens';
-const CUSTOMER_KEY = 'sadakyatra.customer';
 
 // Store numbers as the plain 10-digit form so "+91 93040 57169" and
 // "9304057169" are the same customer everywhere.
 function normalizePhone(value) {
   const digits = String(value || '').replace(/\D/g, '');
   return digits.length === 12 && digits.startsWith('91') ? digits.slice(2) : digits.slice(-10);
-}
-
-function isValidPhone(value) {
-  return /^[6-9]\d{9}$/.test(value);
 }
 
 const CATEGORY_NAMES = { sedan: 'Sedan', suv: 'SUV', traveller: 'Tempo Traveller' };
@@ -341,12 +339,147 @@ function CardGradient({ style, children }) {
 export default function App() {
   return (
     <SafeAreaProvider>
-      <SadakYatraApp />
+      <Root />
     </SafeAreaProvider>
   );
 }
 
-function SadakYatraApp() {
+const SESSION_KEY = 'sadakyatra.session';
+
+// Dashboards this account may open, most important first.
+function viewsFor(account) {
+  const views = [];
+  const has = (role) => account.roles.includes(role);
+  if (has('owner') || has('admin')) views.push('admin');
+  if (has('driver')) views.push('driver');
+  if (has('vehicle_owner')) views.push('fleet');
+  const application = account.partnerApplication;
+  if (application && application.status !== 'APPROVED' && !has('driver') && !has('vehicle_owner')) views.push('partnerStatus');
+  views.push('customer');
+  return views;
+}
+
+function defaultView(account, intent) {
+  const isPartner = account.roles.includes('driver') || account.roles.includes('vehicle_owner');
+  if (intent === 'partner' && !isPartner) {
+    return account.partnerApplication?.status === 'PENDING' ? 'partnerStatus' : 'partnerSignup';
+  }
+  return viewsFor(account)[0];
+}
+
+function Root() {
+  const [booting, setBooting] = useState(true);
+  const [account, setAccount] = useState(null);
+  const [intent, setIntent] = useState(null);
+  const [view, setView] = useState(null);
+  const tokenRef = useRef(null);
+
+  function persist(nextAccount) {
+    SecureStore.setItemAsync(SESSION_KEY, JSON.stringify({ token: tokenRef.current, account: nextAccount })).catch(() => {});
+  }
+
+  function clearSession() {
+    tokenRef.current = null;
+    setAuthToken(null);
+    SecureStore.deleteItemAsync(SESSION_KEY).catch(() => {});
+    setAccount(null);
+    setView(null);
+    setIntent(null);
+  }
+
+  // Fresh account data (e.g. just approved): move off screens that no longer apply.
+  function applyAccount(nextAccount) {
+    setAccount(nextAccount);
+    persist(nextAccount);
+    setView((current) => {
+      if (!current || current === 'partnerSignup') return current;
+      return viewsFor(nextAccount).includes(current) ? current : viewsFor(nextAccount)[0];
+    });
+  }
+
+  useEffect(() => {
+    setSessionExpiredHandler(clearSession);
+    SecureStore.getItemAsync(SESSION_KEY)
+      .then((stored) => {
+        if (!stored) return;
+        const saved = JSON.parse(stored);
+        tokenRef.current = saved.token;
+        setAuthToken(saved.token);
+        setAccount(saved.account);
+        setView(defaultView(saved.account, null));
+        getMe().then((me) => applyAccount(me.account)).catch(() => {});
+      })
+      .catch(() => {})
+      .finally(() => setBooting(false));
+  }, []);
+
+  async function onLoggedIn(token, loginAccount) {
+    tokenRef.current = token;
+    setAuthToken(token);
+    const fullAccount = await getMe().then((me) => me.account).catch(() => loginAccount);
+    setAccount(fullAccount);
+    persist(fullAccount);
+    setView(fullAccount.profileComplete ? defaultView(fullAccount, intent) : null);
+  }
+
+  async function logout() {
+    if (account?.roles.includes('driver')) await signOutDriver();
+    await logoutSession().catch(() => {});
+    clearSession();
+  }
+
+  if (booting) return <LoadingScreen />;
+  if (!account) {
+    if (!intent) return <WelcomeScreen onChoose={setIntent} />;
+    return <OtpLoginScreen intent={intent} onBack={() => setIntent(null)} onLoggedIn={onLoggedIn} />;
+  }
+  if (!account.profileComplete) {
+    return <ProfileScreen account={account} onSaved={(saved) => { applyAccount(saved); setView(defaultView(saved, intent)); }} />;
+  }
+
+  const current = view || defaultView(account, intent);
+  const views = viewsFor(account);
+  if (current === 'partnerSignup') {
+    return (
+      <PartnerSignupScreen
+        account={account}
+        onBack={() => setView('customer')}
+        onSubmitted={(saved) => { applyAccount(saved); setView('partnerStatus'); }}
+      />
+    );
+  }
+  if (current === 'partnerStatus') {
+    return (
+      <PartnerStatusScreen
+        account={account}
+        onAccount={applyAccount}
+        onBookCab={() => setView('customer')}
+        onApplyAgain={() => setView('partnerSignup')}
+        onLogout={logout}
+      />
+    );
+  }
+  if (current === 'customer') {
+    return (
+      <SadakYatraApp
+        account={account}
+        views={views}
+        onSwitchView={setView}
+        onLogout={logout}
+        onJoinPartner={() => setView(account.partnerApplication?.status === 'PENDING' ? 'partnerStatus' : 'partnerSignup')}
+      />
+    );
+  }
+  return (
+    <RoleShell view={current} views={views} onSwitch={setView} onLogout={logout}>
+      {current === 'admin' ? <AdminDashboard account={account} /> : null}
+      {current === 'driver' ? <DriverDashboard /> : null}
+      {current === 'fleet' ? <OwnerFleet /> : null}
+    </RoleShell>
+  );
+}
+
+function SadakYatraApp({ account, views, onSwitchView, onLogout, onJoinPartner }) {
   const insets = useSafeAreaInsets();
   const scrollRef = useRef(null);
   const [tab, setTab] = useState('home');
@@ -357,11 +490,10 @@ function SadakYatraApp() {
   const [dropLocation, setDropLocation] = useState(placePin('Patna'));
   const [carCategory, setCarCategory] = useState('sedan');
   const [service, setService] = useState('Drop Only');
-  const [phone, setPhone] = useState('');
+  const phone = account.phone;
   const [tripDate, setTripDate] = useState(defaultTripDate);
   const [lastTrip, setLastTrip] = useState(null);
   const [bookings, setBookings] = useState([]);
-  const [trackingTokens, setTrackingTokens] = useState({});
   const [bookingTracking, setBookingTracking] = useState(null);
   const [selectedBooking, setSelectedBooking] = useState(null);
   const [bookingEvents, setBookingEvents] = useState([]);
@@ -369,11 +501,7 @@ function SadakYatraApp() {
   const [bookingError, setBookingError] = useState(null);
   const [submitting, setSubmitting] = useState(false);
   const [apiUrl, setApiUrl] = useState('');
-  const [user, setUser] = useState(null);
   const [authModalVisible, setAuthModalVisible] = useState(false);
-  const [authName, setAuthName] = useState('');
-  const [authLoading, setAuthLoading] = useState(false);
-  const [authError, setAuthError] = useState(null);
   const [fareConfig, setFareConfig] = useState(DEFAULT_FARE_CONFIG);
 
   useEffect(() => {
@@ -387,28 +515,7 @@ function SadakYatraApp() {
     getAppConfig()
       .then((config) => { if (config?.fareConfig?.categories) setFareConfig(config.fareConfig); })
       .catch(() => {});
-    SecureStore.getItemAsync(TRACKING_TOKENS_KEY)
-      .then((stored) => { if (stored) setTrackingTokens((current) => ({ ...JSON.parse(stored), ...current })); })
-      .catch(() => {});
-    // Returning customers stay logged in.
-    SecureStore.getItemAsync(CUSTOMER_KEY)
-      .then((stored) => {
-        if (!stored) return;
-        const saved = JSON.parse(stored);
-        if (saved.phone) setPhone(saved.phone);
-        if (saved.user) setUser(saved.user);
-        if (saved.token) setAuthToken(saved.token);
-      })
-      .catch(() => {});
   }, []);
-
-  function rememberTrackingToken(bookingId, token) {
-    setTrackingTokens((current) => {
-      const next = { ...current, [bookingId]: token };
-      SecureStore.setItemAsync(TRACKING_TOKENS_KEY, JSON.stringify(next)).catch(() => {});
-      return next;
-    });
-  }
 
   function goTo(nextTab) {
     setTab(nextTab);
@@ -428,54 +535,6 @@ function SadakYatraApp() {
     goTo('book');
   }
 
-  async function handleLogin(phoneInput = phone) {
-    const cleanPhone = normalizePhone(phoneInput);
-    if (!isValidPhone(cleanPhone)) {
-      setAuthError('Enter a valid 10-digit mobile number.');
-      return false;
-    }
-    setPhone(cleanPhone);
-    setAuthError(null);
-    setAuthLoading(true);
-    try {
-      const data = await login(cleanPhone, authName.trim() || null);
-      setUser(data.user);
-      setAuthToken(data.token);
-      setAuthModalVisible(false);
-      setAuthName('');
-      SecureStore.setItemAsync(CUSTOMER_KEY, JSON.stringify({ phone: cleanPhone, user: data.user, token: data.token })).catch(() => {});
-      return true;
-    } catch (err) {
-      // Backend offline hai — customer ko login pe atkaao mat.
-      // WhatsApp booking waise bhi kaam karta hai.
-      if (err.offline) {
-        setAuthModalVisible(false);
-        return false;
-      }
-      setAuthError(err.message || 'Unable to log in. Please try again.');
-      return false;
-    } finally {
-      setAuthLoading(false);
-    }
-  }
-
-  function logout() {
-    setUser(null);
-    setAuthToken(null);
-    setPhone('');
-    setBookings([]);
-    setSelectedBooking(null);
-    setAuthModalVisible(false);
-    SecureStore.deleteItemAsync(CUSTOMER_KEY).catch(() => {});
-  }
-
-  async function ensureLoggedIn(cleanPhone) {
-    if (user && normalizePhone(user.phone) === cleanPhone) return true;
-    // Agar backend offline hai to login skip karke WhatsApp par bhejo.
-    if (!(await isBackendOnline())) return false;
-    return handleLogin(cleanPhone);
-  }
-
   function bookOnWhatsApp(routeDistanceKm) {
     const fare = calculateFareBreakdown(carCategory, routeDistanceKm, service, fareConfig)?.total ?? null;
     const msg =
@@ -493,10 +552,6 @@ function SadakYatraApp() {
   }
 
   async function sendBooking(routeDistanceKm) {
-    const cleanPhone = normalizePhone(phone);
-    if (!isValidPhone(cleanPhone)) {
-      return Alert.alert('Mobile number needed', 'Enter your 10-digit mobile number so the driver and our team can reach you.');
-    }
     if (!pickupLocation || !dropLocation) {
       return Alert.alert('Set your pins', 'Tap Pickup and Drop to place both pins on the map.');
     }
@@ -508,7 +563,7 @@ function SadakYatraApp() {
     }
 
     // Backend offline ho to seedha WhatsApp par booking bhejo.
-    if (!(await isBackendOnline()) || !(await ensureLoggedIn(cleanPhone))) {
+    if (!(await isBackendOnline())) {
       bookOnWhatsApp(routeDistanceKm);
       return;
     }
@@ -516,8 +571,6 @@ function SadakYatraApp() {
     setSubmitting(true);
     try {
       const data = await createBooking({
-        phone: cleanPhone,
-        fullName: user?.fullName || null,
         serviceType: serviceTypeMap[service] || 'OUTSTATION',
         pickup: from,
         drop: to,
@@ -532,7 +585,6 @@ function SadakYatraApp() {
         customerNote: service
       });
       const booking = data.booking;
-      if (data.trackingToken) rememberTrackingToken(booking.id, data.trackingToken);
 
       setLastTrip({
         from,
@@ -547,7 +599,7 @@ function SadakYatraApp() {
         `${booking.booking_ref}${booking.estimated_fare ? ` · ${rupees(booking.estimated_fare)}` : ''}\nWe are sending it to the nearest cab. Track it live here.`
       );
       goTo('bookings');
-      fetchBookings(cleanPhone);
+      fetchBookings();
       fetchBookingDetails(booking.id);
     } catch (err) {
       // In-app booking fail — customer ko rokna nahi, WhatsApp par bhejo.
@@ -557,32 +609,30 @@ function SadakYatraApp() {
     }
   }
 
-  function fetchBookings(phoneInput = phone) {
-    const cleanPhone = normalizePhone(phoneInput);
-    if (!isValidPhone(cleanPhone)) return undefined;
+  function fetchBookings() {
     setLoadingBookings(true);
     setBookingError(null);
 
-    return listBookings(cleanPhone)
+    return listBookings()
       .then((data) => setBookings(data.bookings || []))
       .catch((err) => setBookingError(err.offline ? 'You are offline. Pull down to try again.' : err.message || 'Could not load bookings.'))
       .finally(() => setLoadingBookings(false));
   }
 
-  function loadBookingDetails(id, token) {
+  function loadBookingDetails(id) {
     return Promise.all([
       getBooking(id).then((data) => {
         setSelectedBooking(data.booking);
         setBookingEvents(data.events || []);
       }),
-      token ? getBookingTracking(id, token).then((data) => setBookingTracking(data.tracking)).catch(() => {}) : null
+      getBookingTracking(id).then((data) => setBookingTracking(data.tracking)).catch(() => {})
     ]);
   }
 
   function fetchBookingDetails(id) {
     setBookingError(null);
     setBookingTracking(null);
-    return loadBookingDetails(id, trackingTokens[id])
+    return loadBookingDetails(id)
       .catch((err) => setBookingError(err.message || 'Could not load booking details.'));
   }
 
@@ -590,10 +640,10 @@ function SadakYatraApp() {
   useEffect(() => {
     if (!selectedBooking || ['COMPLETED', 'CANCELLED'].includes(selectedBooking.status)) return undefined;
     const interval = setInterval(() => {
-      loadBookingDetails(selectedBooking.id, trackingTokens[selectedBooking.id]).catch(() => {});
+      loadBookingDetails(selectedBooking.id).catch(() => {});
     }, 10000);
     return () => clearInterval(interval);
-  }, [selectedBooking?.id, selectedBooking?.status, trackingTokens]);
+  }, [selectedBooking?.id, selectedBooking?.status]);
 
   function confirmCancel(booking) {
     Alert.alert('Cancel this booking?', `${booking.booking_ref} · ${booking.pickup_text} → ${booking.drop_text}`, [
@@ -603,7 +653,7 @@ function SadakYatraApp() {
         style: 'destructive',
         onPress: async () => {
           try {
-            await cancelBooking(booking.id, normalizePhone(phone), 'Cancelled by customer in app');
+            await cancelBooking(booking.id, 'Cancelled by customer in app');
             await fetchBookingDetails(booking.id);
             fetchBookings();
           } catch (err) {
@@ -615,17 +665,15 @@ function SadakYatraApp() {
   }
 
   useEffect(() => {
-    if (tab === 'bookings' && isValidPhone(normalizePhone(phone))) {
-      fetchBookings();
-    }
-  }, [tab, phone]);
+    if (tab === 'bookings') fetchBookings();
+  }, [tab]);
 
   const bottomSpace = insets.bottom + 104;
 
   return (
     <View style={[styles.screen, { paddingTop: insets.top }]}>
       <StatusBar barStyle="light-content" />
-      <Header user={user} onLoginPress={() => { setAuthError(null); setAuthModalVisible(true); }} onMenuPress={() => setMenuVisible(true)} />
+      <Header user={account} onLoginPress={() => setAuthModalVisible(true)} onMenuPress={() => setMenuVisible(true)} />
       <ScrollView
         key={tab}
         ref={scrollRef}
@@ -645,8 +693,6 @@ function SadakYatraApp() {
       >
         {tab === 'home' && <HomeScreen pickupLabel={from} onStart={startBooking} onTab={goTo} apiUrl={apiUrl} setApiUrl={setApiUrl} />}
         {tab === 'fleet' && <FleetScreen onStart={startBooking} />}
-        {tab === 'partner' && <PartnerScreen />}
-        {tab === 'admin' && <PartnerOperations />}
         {tab === 'services' && <ServicesScreen onStart={startBooking} />}
         {tab === 'bookings' && (
           <BookingsScreen
@@ -658,7 +704,6 @@ function SadakYatraApp() {
             tracking={bookingTracking}
             events={bookingEvents}
             onRefresh={() => fetchBookings()}
-            onPhoneSubmit={(value) => { const clean = normalizePhone(value); setPhone(clean); fetchBookings(clean); }}
             onSelectBooking={fetchBookingDetails}
             onCancel={confirmCancel}
             onBook={() => goTo('book')}
@@ -689,7 +734,6 @@ function SadakYatraApp() {
             }}
             onService={setService}
             onCarCategory={setCarCategory}
-            onPhone={setPhone}
             onTripDate={setTripDate}
             onSend={(distance) => sendBooking(distance)}
             isSubmitting={submitting}
@@ -720,8 +764,13 @@ function SadakYatraApp() {
               ].map((item) => <DrawerItem key={item.id} item={item} onPress={() => goTo(item.id)} />)}
               <View style={styles.drawerDivider} />
               <Text style={styles.drawerEyebrow}>WORK WITH SADAKYATRA</Text>
-              <DrawerItem item={{ id: 'partner', label: 'Become a cab partner', icon: Users }} onPress={() => goTo('partner')} />
-              <DrawerItem item={{ id: 'admin', label: 'Driver / Admin login', icon: ShieldCheck }} onPress={() => goTo('admin')} />
+              {views.filter((item) => item !== 'customer').map((item) => (
+                <DrawerItem key={item} item={{ id: item, label: `Open ${VIEW_LABELS[item]}`, icon: ShieldCheck }} onPress={() => { setMenuVisible(false); onSwitchView(item); }} />
+              ))}
+              {!views.includes('driver') && !views.includes('fleet') && !views.includes('partnerStatus') ? (
+                <DrawerItem item={{ id: 'partner', label: 'Become a cab partner', icon: Users }} onPress={() => { setMenuVisible(false); onJoinPartner(); }} />
+              ) : null}
+              <DrawerItem item={{ id: 'logout', label: 'Log out', icon: LogOut }} onPress={() => { setMenuVisible(false); onLogout(); }} />
             </ScrollView>
             <Pressable style={styles.drawerCall} onPress={() => { setMenuVisible(false); Linking.openURL(`tel:${BRAND.phone}`); }}>
               <Phone color={colors.primaryForeground} size={17} />
@@ -733,68 +782,19 @@ function SadakYatraApp() {
       <Modal visible={authModalVisible} animationType="slide" transparent onRequestClose={() => setAuthModalVisible(false)}>
         <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.modalOverlay}>
           <View style={styles.modalContent}>
-            {user ? (
-              <>
-                <Text style={styles.modalTitle}>Your account</Text>
-                <Text style={styles.modalSubtitle}>{user.fullName ? `${user.fullName} · ` : ''}+91 {normalizePhone(user.phone)}</Text>
-                <View style={styles.modalButtons}>
-                  <Pressable style={styles.modalButtonSecondary} onPress={logout}>
-                    <View style={styles.rowCenter}><LogOut color={colors.text} size={16} /><Text style={styles.modalButtonTextSecondary}>Log out</Text></View>
-                  </Pressable>
-                  <Pressable style={styles.modalButton} onPress={() => setAuthModalVisible(false)}>
-                    <Text style={styles.modalButtonText}>Done</Text>
-                  </Pressable>
-                </View>
-              </>
-            ) : (
-              <>
-                <Text style={styles.modalTitle}>Login to SadakYatra</Text>
-                <Text style={styles.modalSubtitle}>Use your mobile number to book and track your trips.</Text>
-                <PhoneInput value={phone} onChangeText={setPhone} />
-                <View style={styles.fieldBox}>
-                  <Text style={styles.fieldLabel}>Name (optional)</Text>
-                  <TextInput
-                    value={authName}
-                    onChangeText={setAuthName}
-                    placeholder="Your name"
-                    placeholderTextColor={colors.placeholder}
-                    style={styles.fieldInput}
-                  />
-                </View>
-                {authError ? <Text style={styles.modalError}>{authError}</Text> : null}
-                <View style={styles.modalButtons}>
-                  <Pressable style={styles.modalButtonSecondary} onPress={() => setAuthModalVisible(false)}>
-                    <Text style={styles.modalButtonTextSecondary}>Cancel</Text>
-                  </Pressable>
-                  <Pressable style={styles.modalButton} onPress={() => handleLogin()} disabled={authLoading}>
-                    <Text style={styles.modalButtonText}>{authLoading ? 'Logging in…' : 'Login'}</Text>
-                  </Pressable>
-                </View>
-              </>
-            )}
+            <Text style={styles.modalTitle}>Your account</Text>
+            <Text style={styles.modalSubtitle}>{account.fullName ? `${account.fullName} · ` : ''}+91 {account.phone}</Text>
+            <View style={styles.modalButtons}>
+              <Pressable style={styles.modalButtonSecondary} onPress={() => { setAuthModalVisible(false); onLogout(); }}>
+                <View style={styles.rowCenter}><LogOut color={colors.text} size={16} /><Text style={styles.modalButtonTextSecondary}>Log out</Text></View>
+              </Pressable>
+              <Pressable style={styles.modalButton} onPress={() => setAuthModalVisible(false)}>
+                <Text style={styles.modalButtonText}>Done</Text>
+              </Pressable>
+            </View>
           </View>
         </KeyboardAvoidingView>
       </Modal>
-    </View>
-  );
-}
-
-function PhoneInput({ value, onChangeText }) {
-  return (
-    <View style={styles.fieldBox}>
-      <View style={styles.fieldLabelRow}><Phone color={colors.primary} size={14} /><Text style={styles.fieldLabel}>Mobile number</Text></View>
-      <View style={styles.phoneRow}>
-        <Text style={styles.phonePrefix}>+91</Text>
-        <TextInput
-          value={value}
-          onChangeText={(text) => onChangeText(text.replace(/[^\d]/g, '').slice(-10))}
-          keyboardType="phone-pad"
-          maxLength={10}
-          placeholder="10-digit mobile"
-          placeholderTextColor={colors.placeholder}
-          style={[styles.fieldInput, styles.flex]}
-        />
-      </View>
     </View>
   );
 }
@@ -1009,105 +1009,6 @@ function FleetScreen({ onStart }) {
   );
 }
 
-function PartnerScreen() {
-  return (
-    <View>
-      <SectionTitle eyebrow="Partner with SadakYatra" title="Grow your cab business" subtitle="Submit your cab details. Our team reviews every application before it joins the fleet." />
-      <PartnerApplicationForm />
-    </View>
-  );
-}
-
-function PartnerApplicationForm() {
-  const [application, setApplication] = useState({
-    fullName: '',
-    phone: '',
-    vehicleNumber: '',
-    vehicleCategory: 'sedan',
-    vehicleModel: '',
-    seats: '',
-    driverName: '',
-    driverPhone: '',
-    city: '',
-    operatingArea: ''
-  });
-  const [submitting, setSubmitting] = useState(false);
-  const [message, setMessage] = useState('');
-
-  function updateApplication(field, value) {
-    setApplication((current) => ({ ...current, [field]: value }));
-  }
-
-  async function submitApplication() {
-    const missing = fields.find((field) => field.key !== 'seats' && application[field.key].trim().length < 2);
-    if (missing) return setMessage(`Please fill: ${missing.label}`);
-    if (!isValidPhone(normalizePhone(application.phone))) return setMessage('Owner mobile must be a valid 10-digit number.');
-    if (!isValidPhone(normalizePhone(application.driverPhone))) return setMessage('Driver mobile must be a valid 10-digit number.');
-    setSubmitting(true);
-    setMessage('');
-    try {
-      const data = await submitPartnerApplication({
-        ...application,
-        phone: normalizePhone(application.phone),
-        driverPhone: normalizePhone(application.driverPhone),
-        seats: application.seats ? Number(application.seats) : null
-      });
-      setMessage(`${data.application.applicationRef} received. Our team will call to verify your details and documents.`);
-      setApplication({ ...application, fullName: '', phone: '', vehicleNumber: '', vehicleModel: '', seats: '', driverName: '', driverPhone: '', city: '', operatingArea: '' });
-    } catch (error) {
-      setMessage(error.message || 'Could not submit application. Check the connection and try again.');
-    } finally {
-      setSubmitting(false);
-    }
-  }
-
-  const fields = [
-    { key: 'fullName', label: 'Owner name' },
-    { key: 'phone', label: 'Owner mobile', keyboardType: 'phone-pad' },
-    { key: 'vehicleNumber', label: 'Vehicle registration', autoCapitalize: 'characters' },
-    { key: 'vehicleModel', label: 'Vehicle model' },
-    { key: 'driverName', label: 'Driver name' },
-    { key: 'driverPhone', label: 'Driver mobile', keyboardType: 'phone-pad' },
-    { key: 'city', label: 'City' },
-    { key: 'operatingArea', label: 'Operating area' },
-    { key: 'seats', label: 'Seats', keyboardType: 'number-pad' }
-  ];
-
-  return (
-    <View style={styles.partnerSection}>
-      <SectionTitle eyebrow="Partner with us" title="Become a Cab Partner" subtitle="Register your cab for review by the SadakYatra team." />
-      <CardGradient style={styles.partnerPanel}>
-        <SelectField icon={Car} label="Vehicle type" value={application.vehicleCategory} options={[
-          { value: 'sedan', label: 'Sedan' },
-          { value: 'suv', label: 'SUV' },
-          { value: 'traveller', label: 'Tempo Traveller' }
-        ]} onValue={(value) => updateApplication('vehicleCategory', value)} />
-        {fields.map((field) => (
-          <View key={field.key} style={styles.fieldBox}>
-            <Text style={styles.fieldLabel}>{field.label}</Text>
-            <TextInput
-              value={application[field.key]}
-              onChangeText={(value) => updateApplication(field.key, value)}
-              keyboardType={field.keyboardType || 'default'}
-              autoCapitalize={field.autoCapitalize || 'words'}
-              placeholder={field.label}
-              placeholderTextColor={colors.placeholder}
-              style={styles.fieldInput}
-            />
-          </View>
-        ))}
-        <Text style={styles.partnerDisclosure}>Applications stay pending until our team verifies your mobile and RC, DL, and insurance. Do not send document scans here; secure upload is not enabled yet.</Text>
-        {message ? <Text style={styles.partnerMessage}>{message}</Text> : null}
-        <Pressable style={styles.smallCtaOuter} onPress={submitApplication} disabled={submitting}>
-          <BrandGradient style={styles.smallCta}>
-            <Text style={styles.smallCtaText}>{submitting ? 'Submitting…' : 'Submit partner application'}</Text>
-          </BrandGradient>
-        </Pressable>
-      </CardGradient>
-    </View>
-  );
-}
-
 function FleetList({ compact = false, onSelect }) {
   return (
     <View style={styles.listGap}>
@@ -1248,7 +1149,6 @@ function BookScreen({ from, to, pickupLocation, dropLocation, service, carCatego
         ]} onValue={onCarCategory} />
         <SelectField icon={Sparkles} label="Trip type" value={service} options={['Drop Only', 'Round Trip', 'Wedding Car - Baraat / Bidai', 'Airport Transfer', 'Local City Ride']} onValue={onService} />
         <TripTimePicker value={tripDate} onChange={onTripDate} />
-        <PhoneInput value={phone} onChangeText={onPhone} />
         <View style={styles.fareCard}>
           <Text style={styles.fareLabel}>Route and fare</Text>
           <Text style={styles.distanceValue}>{routeLoading ? 'Calculating road distance…' : routeDistanceKm !== null ? `${routeDistanceKm} km road distance` : service === 'Local City Ride' ? 'Local city ride · fixed price' : 'Set pickup and drop pins to see the distance'}</Text>
@@ -1341,22 +1241,7 @@ function AboutScreen({ lastTrip }) {
   );
 }
 
-function BookingsScreen({ phone, bookings, loading, error, selectedBooking, tracking, events, onRefresh, onPhoneSubmit, onSelectBooking, onCancel, onBook, onBack }) {
-  const [phoneDraft, setPhoneDraft] = useState(phone || '');
-
-  if (!isValidPhone(normalizePhone(phone))) {
-    return (
-      <View>
-        <SectionTitle eyebrow="My Trips" title="Track your bookings" />
-        <View style={styles.inlinePanel}>
-          <Text style={styles.emptySub}>Enter the mobile number you booked with.</Text>
-          <PhoneInput value={phoneDraft} onChangeText={setPhoneDraft} />
-          <PrimaryButton label="Show my trips" onPress={() => onPhoneSubmit(phoneDraft)} disabled={!isValidPhone(normalizePhone(phoneDraft))} />
-        </View>
-      </View>
-    );
-  }
-
+function BookingsScreen({ phone, bookings, loading, error, selectedBooking, tracking, events, onRefresh, onSelectBooking, onCancel, onBook, onBack }) {
   if (selectedBooking) {
     const status = BOOKING_STATUS[selectedBooking.status] || { label: selectedBooking.status };
     let fare = null;

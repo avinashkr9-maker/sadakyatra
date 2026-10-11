@@ -4,6 +4,10 @@ import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { customAlphabet } from 'nanoid';
 import { one, query, transaction } from './db.js';
 import { getPartnerDocumentsBucket, getSupabaseAdmin } from './supabase.js';
+import {
+  OtpUnavailableError, STAFF_PERMISSIONS, authenticate, checkOtp, createSession, endSession, findOrCreateUser,
+  grantRole, isValidIndianPhone, loadAccount, loginWithPhone, normalizePhone, requestOtp, requireLogin, requireStaff
+} from './auth.js';
 
 const app = express();
 // Express 4 does not catch rejected promises from async handlers.
@@ -13,6 +17,7 @@ const nano = customAlphabet('0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ', 8);
 
 app.use(cors());
 app.use(express.json());
+app.use(authenticate);
 
 const validCategories = new Set(['sedan', 'suv', 'traveller']);
 const validStatuses = new Set(['PENDING', 'CONFIRMED', 'ONGOING', 'COMPLETED', 'CANCELLED']);
@@ -30,9 +35,8 @@ const fareConfig = {
   tollPerKm: 1.5,
   gstPercent: 5
 };
-const adminApiKey = process.env.ADMIN_API_KEY || '';
 const gpsWebhookSecret = process.env.GPS_WEBHOOK_SECRET || '';
-const partnerApplicationAttempts = new Map();
+const rateLimitHits = new Map();
 
 function calculateFareBreakdown(category, distanceKm, serviceType, roundTrip = false) {
   const rate = fareConfig.categories[category];
@@ -54,89 +58,38 @@ function calculateFare(category, distanceKm, serviceType, roundTrip = false) {
   return calculateFareBreakdown(category, distanceKm, serviceType, roundTrip)?.total ?? null;
 }
 
-async function requireAdmin(req, res, next) {
-  const bearerToken = req.get('authorization')?.replace(/^Bearer\s+/i, '');
-  if (bearerToken) {
-    const supabase = getSupabaseAdmin();
-    if (!supabase) return res.status(503).json({ error: 'Supabase admin authentication is not configured' });
-    try {
-      const { data: authData, error: authError } = await supabase.auth.getUser(bearerToken);
-      if (authError || !authData.user) return res.status(401).json({ error: 'Invalid or expired admin session' });
-      const { data: admin, error: adminError } = await supabase
-        .from('admin_users')
-        .select('user_id, full_name')
-        .eq('user_id', authData.user.id)
-        .eq('active', true)
-        .maybeSingle();
-      if (adminError) return res.status(503).json({ error: 'Supabase admin roster is unavailable' });
-      if (!admin) return res.status(403).json({ error: 'This Supabase account is not an active SadakYatra admin' });
-      req.adminUser = { ...authData.user, adminProfile: admin };
-      return next();
-    } catch {
-      return res.status(503).json({ error: 'Unable to verify the Supabase admin session' });
-    }
-  }
-
-  if (!adminApiKey) return res.status(401).json({ error: 'Supabase admin sign-in required' });
-  const suppliedKey = Buffer.from(req.get('x-admin-api-key') || '');
-  const expectedKey = Buffer.from(adminApiKey);
-  if (suppliedKey.length !== expectedKey.length || !timingSafeEqual(suppliedKey, expectedKey)) {
-    return res.status(401).json({ error: 'Admin authentication required' });
-  }
-  next();
-}
-
-function normalizePhone(value) {
-  const digits = String(value || '').replace(/\D/g, '');
-  return digits.length === 12 && digits.startsWith('91') ? digits.slice(2) : digits;
-}
-
-function isValidIndianPhone(phone) {
-  return /^[6-9]\d{9}$/.test(phone);
-}
-
 function publicBooking(booking) {
   if (!booking) return booking;
   const { tracking_token_hash: _trackingTokenHash, ...safeBooking } = booking;
   return safeBooking;
 }
 
-function limitPartnerApplications(req, res, next) {
-  const now = Date.now();
-  const cutoff = now - 60_000;
-  const recent = (partnerApplicationAttempts.get(req.ip) || []).filter((time) => time > cutoff);
-  if (recent.length >= 5) {
-    return res.status(429).json({ error: 'Too many applications. Please try again later.' });
-  }
-  recent.push(now);
-  partnerApplicationAttempts.set(req.ip, recent);
-  next();
+// In-memory limiter: at most max hits per key within windowMs.
+function rateLimit(name, max, windowMs, keyOf = (req) => req.ip) {
+  return (req, res, next) => {
+    const key = `${name}:${keyOf(req)}`;
+    const now = Date.now();
+    const recent = (rateLimitHits.get(key) || []).filter((time) => time > now - windowMs);
+    if (recent.length >= max) return res.status(429).json({ error: 'Too many attempts. Please try again in a few minutes.' });
+    recent.push(now);
+    rateLimitHits.set(key, recent);
+    next();
+  };
 }
 
+// The logged-in user must be an approved, active driver.
 const requireDriver = handle(async (req, res, next) => {
-  const token = req.get('authorization')?.replace(/^Bearer\s+/i, '');
-  if (!token) return res.status(401).json({ error: 'Driver authentication required' });
-  const tokenHash = createHash('sha256').update(token).digest('hex');
+  if (!req.account) return res.status(401).json({ error: 'Please log in again.' });
   const driver = await one(`
     SELECT d.*, p.active AS partner_active
     FROM drivers d
     JOIN partners p ON p.id = d.partner_id
-    WHERE d.access_token_hash = $1 AND d.is_active AND p.active
-  `, [tokenHash]);
-  if (!driver) return res.status(401).json({ error: 'Invalid driver token' });
+    WHERE d.user_id = $1 AND d.is_active AND p.active
+  `, [req.account.id]);
+  if (!driver) return res.status(403).json({ error: 'Your cab partner account is not active.' });
   req.driver = driver;
   next();
 });
-
-async function findOrCreateCustomer(phone, fullName) {
-  const existing = await one('SELECT * FROM users WHERE phone = $1', [phone]);
-  if (existing) return existing;
-  return one(`
-    INSERT INTO users (role, full_name, phone) VALUES ('CUSTOMER', $1, $2)
-    ON CONFLICT (phone) DO UPDATE SET phone = EXCLUDED.phone
-    RETURNING *
-  `, [fullName || null, phone]);
-}
 
 const getBooking = (id) => one('SELECT * FROM bookings WHERE id = $1', [id]);
 
@@ -202,41 +155,136 @@ app.get('/config', (_req, res) => {
   res.json(appConfig);
 });
 
-app.post('/auth/mock-login', handle(async (req, res) => {
-  const { phone, fullName } = req.body;
-  if (!phone) return res.status(400).json({ error: 'phone is required' });
+// ---- Login (mobile OTP) -------------------------------------------------
+const otpPhone = (req) => normalizePhone(req.body?.phone);
 
-  const user = await findOrCreateCustomer(String(phone), fullName);
-
-  res.json({
-    token: `mock-token-${user.id}`,
-    user: { id: user.id, role: user.role, fullName: user.full_name, phone: user.phone }
-  });
+app.post('/auth/otp/request', rateLimit('otp-ip', 30, 15 * 60_000), handle(async (req, res) => {
+  const phone = otpPhone(req);
+  if (!isValidIndianPhone(phone)) return res.status(400).json({ error: 'Enter a valid 10-digit mobile number.' });
+  try {
+    const result = await requestOtp(phone);
+    if (result.retryAfter) {
+      return res.status(429).json({ error: `Please wait ${result.retryAfter} seconds before asking for a new code.`, retryAfter: result.retryAfter });
+    }
+    res.json({ sent: true });
+  } catch (error) {
+    if (error instanceof OtpUnavailableError) {
+      return res.status(503).json({ error: 'SMS login is not available yet. Please call or WhatsApp SadakYatra to book.' });
+    }
+    throw error;
+  }
 }));
 
-app.post('/partners/applications', limitPartnerApplications, handle(async (req, res) => {
-  const {
-    fullName,
-    phone: rawPhone,
-    vehicleNumber,
-    vehicleCategory,
-    vehicleModel,
-    seats,
-    driverName,
-    driverPhone: rawDriverPhone,
-    city,
-    operatingArea
-  } = req.body;
-  const phone = normalizePhone(rawPhone);
-  const driverPhone = normalizePhone(rawDriverPhone);
-  const plate = String(vehicleNumber || '').trim().toUpperCase();
-  const requiredText = [fullName, vehicleModel, driverName, city, operatingArea];
-
-  if (requiredText.some((value) => typeof value !== 'string' || value.trim().length < 2 || value.length > 120)) {
-    return res.status(400).json({ error: 'Name, model, city, and operating area are required' });
+app.post('/auth/otp/verify', rateLimit('otp-verify-ip', 60, 15 * 60_000), handle(async (req, res) => {
+  const phone = otpPhone(req);
+  const code = String(req.body?.code || '').trim();
+  if (!isValidIndianPhone(phone) || !/^\d{6}$/.test(code)) {
+    return res.status(400).json({ error: 'Enter the 6-digit code sent to your mobile.' });
   }
-  if (!isValidIndianPhone(phone) || !isValidIndianPhone(driverPhone)) {
-    return res.status(400).json({ error: 'Valid Indian owner and driver mobile numbers are required' });
+  if (!(await checkOtp(phone, code))) return res.status(401).json({ error: 'Wrong or expired code. Please try again.' });
+  const user = await loginWithPhone(phone);
+  const token = await createSession(user.id);
+  res.json({ token, account: await loadAccount(user.id) });
+}));
+
+app.post('/auth/logout', requireLogin, handle(async (req, res) => {
+  await endSession(req.get('authorization').replace(/^Bearer\s+/i, ''));
+  res.json({ ok: true });
+}));
+
+// Who is logged in, their roles, and where their partner application stands.
+async function accountWithPartner(account) {
+  const application = await one(`
+    SELECT id, application_ref, status, partner_type, vehicle_number, vehicle_category, vehicle_model, review_note, created_at
+    FROM partner_applications WHERE applicant_user_id = $1 ORDER BY id DESC LIMIT 1
+  `, [account.id]);
+  return { ...account, partnerApplication: application || null };
+}
+
+app.get('/me', requireLogin, handle(async (req, res) => {
+  res.json({ account: await accountWithPartner(req.account) });
+}));
+
+app.patch('/me', requireLogin, handle(async (req, res) => {
+  const fullName = typeof req.body.fullName === 'string' ? req.body.fullName.trim() : '';
+  const email = typeof req.body.email === 'string' ? req.body.email.trim().toLowerCase() : '';
+  if (fullName.length < 2 || fullName.length > 80) return res.status(400).json({ error: 'Please enter your full name.' });
+  if (email && (email.length > 120 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))) {
+    return res.status(400).json({ error: 'Please enter a valid email address, or leave it empty.' });
+  }
+  await query('UPDATE users SET full_name = $1, email = $2 WHERE id = $3', [fullName, email || null, req.account.id]);
+  res.json({ account: await accountWithPartner(await loadAccount(req.account.id)) });
+}));
+
+// A vehicle owner's own cabs and drivers, with each cab's live status.
+app.get('/partner/fleet', requireLogin, handle(async (req, res) => {
+  const fleet = await query(`
+    SELECT p.partner_ref, p.active AS partner_active, v.id AS vehicle_id, v.cab_ref, v.plate_no, v.category, v.model,
+      v.active AS vehicle_active, d.driver_name, d.phone AS driver_phone, d.is_online,
+      current.booking_ref AS current_booking_ref, current.driver_status AS current_driver_status
+    FROM partners p
+    JOIN vehicles v ON v.partner_id = p.id
+    LEFT JOIN drivers d ON d.id = v.driver_id
+    LEFT JOIN bookings current ON current.id = (
+      SELECT b.id FROM bookings b WHERE b.vehicle_id = v.id AND b.status IN ('CONFIRMED','ONGOING')
+      ORDER BY b.updated_at DESC LIMIT 1
+    )
+    WHERE p.user_id = $1
+    ORDER BY v.id
+  `, [req.account.id]);
+  res.json({ fleet });
+}));
+
+// ---- Owner manages admin accounts ----------------------------------------
+app.get('/admin/admins', requireStaff('admins'), handle(async (_req, res) => {
+  const admins = await query(`
+    SELECT u.id, u.full_name, u.phone, r.permissions, r.created_at
+    FROM user_roles r JOIN users u ON u.id = r.user_id
+    WHERE r.role = 'admin' ORDER BY r.created_at
+  `);
+  res.json({ admins });
+}));
+
+app.post('/admin/admins', requireStaff('admins'), handle(async (req, res) => {
+  const phone = normalizePhone(req.body.phone);
+  const fullName = typeof req.body.fullName === 'string' ? req.body.fullName.trim() : '';
+  const permissions = Array.isArray(req.body.permissions) ? [...new Set(req.body.permissions)] : [];
+  if (!isValidIndianPhone(phone)) return res.status(400).json({ error: 'Enter a valid 10-digit mobile number.' });
+  if (!permissions.length || permissions.some((item) => !STAFF_PERMISSIONS.includes(item))) {
+    return res.status(400).json({ error: `Choose at least one permission: ${STAFF_PERMISSIONS.join(', ')}` });
+  }
+  const admin = await transaction(async (client) => {
+    const user = await findOrCreateUser(phone, fullName || null, client);
+    await grantRole(user.id, 'admin', permissions, client);
+    return user;
+  });
+  res.status(201).json({ admin: { id: admin.id, full_name: admin.full_name, phone, permissions } });
+}));
+
+app.delete('/admin/admins/:userId', requireStaff('admins'), handle(async (req, res) => {
+  const removed = await one("DELETE FROM user_roles WHERE user_id = $1 AND role = 'admin' RETURNING user_id", [Number(req.params.userId)]);
+  if (!removed) return res.status(404).json({ error: 'Admin not found' });
+  res.json({ removed: true });
+}));
+
+// ---- Cab partner registration (from a logged-in account) -----------------
+app.post('/partners/applications', requireLogin, rateLimit('partner-apply', 5, 60 * 60_000, (req) => req.account.id), handle(async (req, res) => {
+  const { partnerType = 'driver', vehicleNumber, vehicleCategory, vehicleModel, seats, city, operatingArea } = req.body;
+  const fullName = String(req.body.fullName || req.account.fullName || '').trim();
+  const phone = req.account.phone;
+  // A driver drives their own cab; a vehicle owner names the driver (who may be themselves).
+  const driverName = partnerType === 'driver' ? fullName : String(req.body.driverName || '').trim();
+  const driverPhone = partnerType === 'driver' ? phone : normalizePhone(req.body.driverPhone);
+  const plate = String(vehicleNumber || '').trim().toUpperCase();
+
+  if (!['driver', 'vehicle_owner'].includes(partnerType)) {
+    return res.status(400).json({ error: 'Choose whether you are a driver or a vehicle owner' });
+  }
+  if ([fullName, vehicleModel, driverName, city, operatingArea].some((value) => typeof value !== 'string' || value.trim().length < 2 || value.length > 120)) {
+    return res.status(400).json({ error: 'Name, model, driver, city, and operating area are required' });
+  }
+  if (!isValidIndianPhone(driverPhone)) {
+    return res.status(400).json({ error: 'Enter a valid 10-digit mobile number for the driver' });
   }
   if (!/^[A-Z0-9 -]{6,20}$/.test(plate)) {
     return res.status(400).json({ error: 'Enter a valid vehicle registration number' });
@@ -247,22 +295,30 @@ app.post('/partners/applications', limitPartnerApplications, handle(async (req, 
   if (seats != null && (!Number.isInteger(Number(seats)) || Number(seats) < 1 || Number(seats) > 60)) {
     return res.status(400).json({ error: 'Seats must be between 1 and 60' });
   }
+  const pending = await one("SELECT id FROM partner_applications WHERE applicant_user_id = $1 AND status = 'PENDING'", [req.account.id]);
+  if (pending) return res.status(409).json({ error: 'Your registration is already waiting for SadakYatra approval.' });
 
-  const application = await one(`
-    INSERT INTO partner_applications (
-      application_ref, full_name, phone, vehicle_number, vehicle_category, vehicle_model,
-      seats, driver_name, driver_phone, city, operating_area
-    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-    RETURNING id, application_ref, status
-  `, [`SY-APP-${nano()}`, fullName.trim(), phone, plate, vehicleCategory, vehicleModel.trim(),
-    seats == null ? null : Number(seats), driverName.trim(), driverPhone, city.trim(), operatingArea.trim()]);
+  const application = await transaction(async (client) => {
+    if (!req.account.fullName) await query('UPDATE users SET full_name = $1 WHERE id = $2', [fullName, req.account.id], client);
+    // The applicant proved their number with OTP; a different driver number is checked when that driver logs in.
+    return one(`
+      INSERT INTO partner_applications (
+        application_ref, full_name, phone, vehicle_number, vehicle_category, vehicle_model,
+        seats, driver_name, driver_phone, city, operating_area, applicant_user_id, partner_type, phone_verified
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, true)
+      RETURNING id, application_ref, status, partner_type
+    `, [`SY-APP-${nano()}`, fullName, phone, plate, vehicleCategory, String(vehicleModel).trim(),
+      seats == null ? null : Number(seats), driverName, driverPhone, city.trim(), operatingArea.trim(),
+      req.account.id, partnerType], client);
+  });
 
   res.status(201).json({
     application: {
       id: application.id,
       applicationRef: application.application_ref,
       status: application.status,
-      message: 'Application received. The team will contact you to verify your phone and documents.'
+      partnerType: application.partner_type,
+      message: 'Registration submitted. Waiting for SadakYatra approval.'
     }
   });
 }));
@@ -299,10 +355,8 @@ app.post('/pricing/estimate', (req, res) => {
   });
 });
 
-app.post('/bookings', handle(async (req, res) => {
+app.post('/bookings', requireLogin, handle(async (req, res) => {
   const {
-    phone,
-    fullName,
     serviceType,
     pickup,
     drop,
@@ -317,8 +371,8 @@ app.post('/bookings', handle(async (req, res) => {
     customerNote
   } = req.body;
 
-  if (!phone || !serviceType || !pickup || !drop || !tripDatetime || !carCategory) {
-    return res.status(400).json({ error: 'phone, serviceType, pickup, drop, tripDatetime, carCategory are required' });
+  if (!serviceType || !pickup || !drop || !tripDatetime || !carCategory) {
+    return res.status(400).json({ error: 'serviceType, pickup, drop, tripDatetime, carCategory are required' });
   }
   if (!validServiceTypes.has(serviceType)) {
     return res.status(400).json({ error: 'serviceType must be OUTSTATION, AIRPORT, WEDDING, or LOCAL' });
@@ -340,7 +394,7 @@ app.post('/bookings', handle(async (req, res) => {
     return res.status(400).json({ error: 'routeDistanceKm must be a non-negative number' });
   }
 
-  const user = await findOrCreateCustomer(String(phone), fullName);
+  const user = req.account;
 
   const fareBreakdown = calculateFareBreakdown(
     carCategory,
@@ -388,42 +442,31 @@ app.post('/bookings', handle(async (req, res) => {
   res.status(201).json({ booking: publicBooking(await getBooking(bookingId)), trackingToken });
 }));
 
-app.get('/bookings/:id', handle(async (req, res) => {
+// Customers see only their own bookings; staff with booking access see any.
+const canSeeBooking = (account, booking) => booking.customer_id === account.id
+  || account.roles.includes('owner')
+  || (account.roles.includes('admin') && account.permissions.includes('bookings'));
+
+app.get('/bookings/:id', requireLogin, handle(async (req, res) => {
   const id = Number(req.params.id);
   const booking = await getBooking(id);
-  if (!booking) return res.status(404).json({ error: 'Booking not found' });
+  if (!booking || !canSeeBooking(req.account, booking)) return res.status(404).json({ error: 'Booking not found' });
 
   const events = await query('SELECT * FROM booking_status_events WHERE booking_id = $1 ORDER BY id ASC', [id]);
   res.json({ booking: publicBooking(booking), events });
 }));
 
-app.get('/bookings', handle(async (req, res) => {
-  const { phone } = req.query;
-  if (!phone) return res.status(400).json({ error: 'phone query param is required' });
-
-  const bookings = await query(`
-    SELECT b.* FROM bookings b
-    JOIN users u ON u.id = b.customer_id
-    WHERE u.phone = $1
-    ORDER BY b.created_at DESC
-  `, [String(phone)]);
+app.get('/bookings', requireLogin, handle(async (req, res) => {
+  const bookings = await query('SELECT * FROM bookings WHERE customer_id = $1 ORDER BY created_at DESC', [req.account.id]);
   res.json({ bookings: bookings.map(publicBooking) });
 }));
 
-app.post('/bookings/:id/cancel', handle(async (req, res) => {
+app.post('/bookings/:id/cancel', requireLogin, handle(async (req, res) => {
   const id = Number(req.params.id);
-  const { phone, note } = req.body;
-  if (!phone) return res.status(400).json({ error: 'phone is required' });
+  const { note } = req.body;
 
-  const booking = await one(`
-    SELECT b.*, u.phone AS customer_phone FROM bookings b
-    JOIN users u ON u.id = b.customer_id
-    WHERE b.id = $1
-  `, [id]);
-  if (!booking) return res.status(404).json({ error: 'Booking not found' });
-  if (booking.customer_phone !== phone) {
-    return res.status(403).json({ error: 'This booking does not belong to this phone number' });
-  }
+  const booking = await getBooking(id);
+  if (!booking || booking.customer_id !== req.account.id) return res.status(404).json({ error: 'Booking not found' });
   if (booking.status === 'COMPLETED' || booking.status === 'CANCELLED') {
     return res.status(400).json({ error: 'Booking can no longer be cancelled' });
   }
@@ -439,7 +482,7 @@ app.post('/bookings/:id/cancel', handle(async (req, res) => {
   res.json({ booking: publicBooking(await getBooking(id)) });
 }));
 
-app.get('/admin/bookings', requireAdmin, handle(async (req, res) => {
+app.get('/admin/bookings', requireStaff('bookings'), handle(async (req, res) => {
   const status = req.query.status;
   if (status && !validStatuses.has(String(status))) {
     return res.status(400).json({ error: 'Invalid status filter' });
@@ -452,7 +495,7 @@ app.get('/admin/bookings', requireAdmin, handle(async (req, res) => {
   res.json({ bookings: rows.map(publicBooking) });
 }));
 
-app.patch('/admin/bookings/:id/status', requireAdmin, handle(async (req, res) => {
+app.patch('/admin/bookings/:id/status', requireStaff('bookings'), handle(async (req, res) => {
   const id = Number(req.params.id);
   const { status, changedByUserId, note } = req.body;
 
@@ -474,7 +517,7 @@ app.patch('/admin/bookings/:id/status', requireAdmin, handle(async (req, res) =>
   res.json({ booking: publicBooking(await getBooking(id)) });
 }));
 
-app.get('/admin/partners/applications', requireAdmin, handle(async (req, res) => {
+app.get('/admin/partners/applications', requireStaff('partners'), handle(async (req, res) => {
   const status = String(req.query.status || 'PENDING');
   if (!['PENDING', 'APPROVED', 'REJECTED'].includes(status)) {
     return res.status(400).json({ error: 'Invalid application status' });
@@ -483,7 +526,7 @@ app.get('/admin/partners/applications', requireAdmin, handle(async (req, res) =>
   res.json({ applications });
 }));
 
-app.patch('/admin/partners/applications/:id', requireAdmin, handle(async (req, res) => {
+app.patch('/admin/partners/applications/:id', requireStaff('partners'), handle(async (req, res) => {
   const id = Number(req.params.id);
   const { status, reviewNote } = req.body;
   if (status !== 'REJECTED') {
@@ -498,7 +541,7 @@ app.patch('/admin/partners/applications/:id', requireAdmin, handle(async (req, r
   res.json({ application });
 }));
 
-app.post('/admin/partners/applications/:id/approve', requireAdmin, handle(async (req, res) => {
+app.post('/admin/partners/applications/:id/approve', requireStaff('partners'), handle(async (req, res) => {
   const id = Number(req.params.id);
   const { phoneVerified } = req.body;
   // Documents are optional for now; blank fields are treated as not provided.
@@ -511,7 +554,8 @@ app.post('/admin/partners/applications/:id/approve', requireAdmin, handle(async 
   if (application.status !== 'PENDING') {
     return res.status(409).json({ error: 'Only pending applications can be approved' });
   }
-  if (phoneVerified !== true) {
+  // Applications from a logged-in account were OTP-verified; older ones need the admin's check.
+  if (!application.phone_verified && phoneVerified !== true) {
     return res.status(400).json({ error: 'Verify the partner phone before approval' });
   }
 
@@ -531,23 +575,36 @@ app.post('/admin/partners/applications/:id/approve', requireAdmin, handle(async 
     }
   }
 
-  const driverToken = randomBytes(32).toString('base64url');
-  const driverTokenHash = createHash('sha256').update(driverToken).digest('hex');
   const partnerRef = `SY-PARTNER-${nano()}`;
   let approved;
   try {
-    ({ approved } = await one(
-      'SELECT approve_partner_application($1, $2, $3, $4, $5, $6) AS approved',
-      [id, partnerRef, driverTokenHash, rcDocumentKey, dlDocumentKey, insuranceDocumentKey]
-    ));
+    approved = await transaction(async (client) => {
+      const { approved: created } = await one(
+        'SELECT approve_partner_application($1, $2, NULL, $3, $4, $5) AS approved',
+        [id, partnerRef, rcDocumentKey, dlDocumentKey, insuranceDocumentKey], client
+      );
+      // The driver logs in with their own mobile number; the applicant gets their partner role.
+      const driverUser = await findOrCreateUser(application.driver_phone, application.driver_name, client);
+      await grantRole(driverUser.id, 'driver', [], client);
+      await query('UPDATE drivers SET user_id = $1 WHERE id = $2', [driverUser.id, created.driverId], client);
+      const ownerId = application.applicant_user_id ?? driverUser.id;
+      await query('UPDATE partners SET user_id = $1, partner_type = $2 WHERE id = $3',
+        [ownerId, application.partner_type, created.partnerId], client);
+      if (application.partner_type === 'vehicle_owner') await grantRole(ownerId, 'vehicle_owner', [], client);
+      return created;
+    });
   } catch (error) {
     console.error('Partner approval failed', error.message);
     return res.status(409).json({ error: 'Could not approve this application. The driver phone or vehicle number may already be registered.' });
   }
-  res.status(201).json({ ...approved, partnerRef, driverAccessToken: driverToken });
+  res.status(201).json({
+    ...approved,
+    partnerRef,
+    message: `Approved. The driver can now log in with +91 ${application.driver_phone}.`
+  });
 }));
 
-app.get('/admin/partners', requireAdmin, handle(async (_req, res) => {
+app.get('/admin/partners', requireStaff('partners'), handle(async (_req, res) => {
   const partners = await query(`
     SELECT p.id AS partner_id, p.partner_ref, p.full_name, p.phone, p.city, p.operating_area,
       p.active AS partner_active, v.id AS vehicle_id, v.cab_ref, v.plate_no, v.category, v.model, v.active AS vehicle_active,
@@ -569,7 +626,7 @@ app.get('/admin/partners', requireAdmin, handle(async (_req, res) => {
   res.json({ partners });
 }));
 
-app.patch('/admin/partners/:id', requireAdmin, handle(async (req, res) => {
+app.patch('/admin/partners/:id', requireStaff('partners'), handle(async (req, res) => {
   const partnerId = Number(req.params.id);
   const { active } = req.body;
   if (typeof active !== 'boolean') return res.status(400).json({ error: 'active must be a boolean' });
@@ -587,7 +644,7 @@ app.patch('/admin/partners/:id', requireAdmin, handle(async (req, res) => {
   res.json({ partner: { id: partnerId, active } });
 }));
 
-app.patch('/admin/vehicles/:id', requireAdmin, handle(async (req, res) => {
+app.patch('/admin/vehicles/:id', requireStaff('partners'), handle(async (req, res) => {
   const vehicleId = Number(req.params.id);
   const { active, gpsDeviceId } = req.body;
   if (active !== undefined && typeof active !== 'boolean') return res.status(400).json({ error: 'active must be a boolean' });
@@ -782,7 +839,7 @@ async function runDispatchSweep() {
 }
 setInterval(runDispatchSweep, 10_000).unref();
 
-app.post('/admin/bookings/:id/assign', requireAdmin, handle(async (req, res) => {
+app.post('/admin/bookings/:id/assign', requireStaff('bookings'), handle(async (req, res) => {
   const bookingId = Number(req.params.id);
   const vehicleId = Number(req.body.vehicleId);
   if (!Number.isInteger(vehicleId) || vehicleId < 1) {
@@ -944,16 +1001,19 @@ app.patch('/driver/bookings/:id/status', requireDriver, handle(async (req, res) 
   res.json({ booking: publicBooking(await getBooking(bookingId)) });
 }));
 
+// The logged-in customer (or staff) can track; a tracking token also works, e.g. for a shared link.
 app.get('/bookings/:id/tracking', handle(async (req, res) => {
+  const booking = await one('SELECT customer_id, tracking_token_hash FROM bookings WHERE id = $1', [Number(req.params.id)]);
+  if (!booking) return res.status(404).json({ error: 'Booking not found' });
   const token = req.get('x-booking-tracking-token') || '';
-  if (!token) return res.status(401).json({ error: 'Booking tracking token required' });
-  const tokenHash = createHash('sha256').update(token).digest('hex');
-  const booking = await one('SELECT tracking_token_hash FROM bookings WHERE id = $1', [Number(req.params.id)]);
-  if (!booking?.tracking_token_hash) return res.status(404).json({ error: 'Booking not found' });
-  const suppliedHash = Buffer.from(tokenHash);
-  const expectedHash = Buffer.from(booking.tracking_token_hash);
-  if (suppliedHash.length !== expectedHash.length || !timingSafeEqual(suppliedHash, expectedHash)) {
-    return res.status(401).json({ error: 'Invalid booking tracking token' });
+  const allowedBySession = req.account && canSeeBooking(req.account, booking);
+  if (!allowedBySession) {
+    if (!token || !booking.tracking_token_hash) return res.status(401).json({ error: 'Please log in to track this booking' });
+    const suppliedHash = Buffer.from(createHash('sha256').update(token).digest('hex'));
+    const expectedHash = Buffer.from(booking.tracking_token_hash);
+    if (suppliedHash.length !== expectedHash.length || !timingSafeEqual(suppliedHash, expectedHash)) {
+      return res.status(401).json({ error: 'Invalid booking tracking token' });
+    }
   }
   const tracking = await one(`
     SELECT b.id, b.booking_ref, b.status, b.driver_status, b.car_category,

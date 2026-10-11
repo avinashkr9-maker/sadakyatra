@@ -1,14 +1,12 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import * as Location from 'expo-location';
-import * as SecureStore from 'expo-secure-store';
 import MapView, { Marker } from 'react-native-maps';
-import { partnerAdminRequest, partnerDriverRequest } from '../api/client';
+import { apiRequest } from '../api/client';
 import { alertNewOffer, getDriverPushToken } from '../notifications';
 
 const CATEGORY_LABELS = { sedan: 'Sedan', suv: 'SUV', traveller: 'Tempo Traveller' };
-const DRIVER_TOKEN_KEY = 'sadakyatra.driverToken';
-const ADMIN_KEY_KEY = 'sadakyatra.adminKey';
+const PERMISSION_LABELS = { bookings: 'Bookings', partners: 'Partners & fleet', pricing: 'Pricing' };
 
 function formatPickupTime(value) {
   const date = new Date(value);
@@ -23,32 +21,13 @@ const stages = {
   TRIP_STARTED: 'TRIP_COMPLETED'
 };
 
-export default function PartnerOperations() {
-  const [mode, setMode] = useState('driver');
-  return (
-    <View style={styles.section}>
-      <Text style={styles.title}>Partner operations</Text>
-      <Text style={styles.subtitle}>Driver availability, bookings, and fleet review.</Text>
-      <View style={styles.modeRow}>
-        <ModeButton label="Driver" active={mode === 'driver'} onPress={() => setMode('driver')} />
-        <ModeButton label="Admin" active={mode === 'admin'} onPress={() => setMode('admin')} />
-      </View>
-      {mode === 'driver' ? <DriverMode /> : <AdminMode />}
-    </View>
-  );
+// Before logging out on this phone: stop offers ringing it and take the driver offline.
+export async function signOutDriver() {
+  await apiRequest('/driver/push-token', 'POST', { token: null }).catch(() => {});
+  await apiRequest('/driver/presence', 'PATCH', { online: false }).catch(() => {});
 }
 
-function ModeButton({ label, active, onPress }) {
-  return (
-    <Pressable onPress={onPress} style={[styles.modeButton, active && styles.modeButtonActive]}>
-      <Text style={[styles.modeText, active && styles.modeTextActive]}>{label}</Text>
-    </Pressable>
-  );
-}
-
-function DriverMode() {
-  const [token, setToken] = useState('');
-  const [activeToken, setActiveToken] = useState('');
+export function DriverDashboard() {
   const [driver, setDriver] = useState(null);
   const [online, setOnline] = useState(false);
   const [bookings, setBookings] = useState([]);
@@ -60,22 +39,37 @@ function DriverMode() {
   const hasRemotePush = useRef(false);
 
   useEffect(() => {
-    // Log the driver back in with the token saved on this phone.
-    SecureStore.getItemAsync(DRIVER_TOKEN_KEY)
-      .then((saved) => { if (saved) connect(saved, true); })
-      .catch(() => {});
+    load();
     return () => locationSubscription.current?.remove();
   }, []);
 
   // New offers arrive without the driver having to tap refresh.
   useEffect(() => {
-    if (!activeToken) return undefined;
+    if (!driver) return undefined;
     const interval = setInterval(() => refresh().catch(() => {}), 10000);
     return () => clearInterval(interval);
-  }, [activeToken]);
+  }, [driver]);
 
-  async function refresh(auth = activeToken) {
-    const result = await partnerDriverRequest('/driver/bookings', 'GET', undefined, auth);
+  async function load() {
+    setBusy(true);
+    try {
+      const me = await apiRequest('/driver/me');
+      setDriver(me.driver);
+      registerPush().catch(() => {});
+      await refresh();
+      if (me.driver.online) {
+        await startLocationSharing().catch(() => {});
+        setOnline(true);
+      }
+    } catch (error) {
+      setMessage(error.message || 'Could not open your driver account.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function refresh() {
+    const result = await apiRequest('/driver/bookings');
     const latest = result.bookings || [];
     for (const booking of latest) {
       if (booking.driver_status !== 'OFFERED' || seenOffers.current.has(booking.id)) continue;
@@ -85,62 +79,26 @@ function DriverMode() {
     setBookings(latest);
   }
 
-  async function registerPush(auth) {
+  async function registerPush() {
     const pushToken = await getDriverPushToken();
     if (!pushToken) return;
-    await partnerDriverRequest('/driver/push-token', 'POST', { token: pushToken }, auth);
+    await apiRequest('/driver/push-token', 'POST', { token: pushToken });
     hasRemotePush.current = true;
   }
 
-  async function startLocationSharing(auth) {
+  async function startLocationSharing() {
     const permission = await Location.requestForegroundPermissionsAsync();
     if (permission.status !== 'granted') throw new Error('Location permission is needed to go online.');
     locationSubscription.current?.remove();
-    const send = ({ coords }) => partnerDriverRequest('/driver/location', 'POST', {
+    const send = ({ coords }) => apiRequest('/driver/location', 'POST', {
       latitude: coords.latitude,
       longitude: coords.longitude
-    }, auth).catch(() => {});
+    }).catch(() => {});
     Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced }).then(send).catch(() => {});
     locationSubscription.current = await Location.watchPositionAsync(
       { accuracy: Location.Accuracy.Balanced, timeInterval: 8000, distanceInterval: 15 },
       send
     );
-  }
-
-  async function connect(auth = token.trim(), silent = false) {
-    if (!auth) return setMessage('Paste the driver token you received from SadakYatra.');
-    setBusy(true);
-    if (!silent) setMessage('');
-    try {
-      const me = await partnerDriverRequest('/driver/me', 'GET', undefined, auth);
-      setDriver(me.driver);
-      setActiveToken(auth);
-      setToken('');
-      await SecureStore.setItemAsync(DRIVER_TOKEN_KEY, auth).catch(() => {});
-      registerPush(auth).catch(() => {});
-      await refresh(auth);
-      if (me.driver.online) {
-        await startLocationSharing(auth).catch(() => {});
-        setOnline(true);
-      }
-    } catch (error) {
-      if (silent && error.status === 401) await SecureStore.deleteItemAsync(DRIVER_TOKEN_KEY).catch(() => {});
-      if (!silent || error.status === 401) setMessage(error.message || 'Could not log in with this token.');
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function logout() {
-    if (online) await toggleOnline();
-    // Stop offers for this driver ringing this phone after logout.
-    await partnerDriverRequest('/driver/push-token', 'POST', { token: null }, activeToken).catch(() => {});
-    hasRemotePush.current = false;
-    await SecureStore.deleteItemAsync(DRIVER_TOKEN_KEY).catch(() => {});
-    setActiveToken('');
-    setDriver(null);
-    setBookings([]);
-    setMessage('Logged out.');
   }
 
   async function toggleOnline() {
@@ -150,12 +108,12 @@ function DriverMode() {
       if (online) {
         locationSubscription.current?.remove();
         locationSubscription.current = null;
-        await partnerDriverRequest('/driver/presence', 'PATCH', { online: false }, activeToken);
+        await apiRequest('/driver/presence', 'PATCH', { online: false });
         setOnline(false);
         return;
       }
-      await startLocationSharing(activeToken);
-      await partnerDriverRequest('/driver/presence', 'PATCH', { online: true }, activeToken);
+      await startLocationSharing();
+      await apiRequest('/driver/presence', 'PATCH', { online: true });
       setOnline(true);
       await refresh();
     } catch (error) {
@@ -167,8 +125,8 @@ function DriverMode() {
 
   async function respond(bookingId, decision) {
     try {
-      await partnerDriverRequest(`/driver/bookings/${bookingId}/response`, 'PATCH', { decision }, activeToken);
-      setMessage(decision === 'ACCEPT' ? 'Booking accepted. Tap "Going to pickup" when you leave.' : 'Booking rejected.');
+      await apiRequest(`/driver/bookings/${bookingId}/response`, 'PATCH', { decision });
+      setMessage(decision === 'ACCEPT' ? 'Booking accepted. Tap "Going to pickup" when you leave.' : 'Booking declined.');
       await refresh();
     } catch (error) {
       setMessage(error.message || 'Could not respond to booking.');
@@ -178,37 +136,33 @@ function DriverMode() {
 
   async function advance(bookingId, status) {
     try {
-      await partnerDriverRequest(`/driver/bookings/${bookingId}/status`, 'PATCH', { status }, activeToken);
+      await apiRequest(`/driver/bookings/${bookingId}/status`, 'PATCH', { status });
       await refresh();
     } catch (error) {
       setMessage(error.message || 'Could not update trip status.');
     }
   }
 
-  if (!activeToken) {
+  if (!driver) {
     return (
-      <View>
-        <Text style={styles.disclosure}>Paste the driver token you received from SadakYatra. You only need to do this once on this phone.</Text>
-        <View style={styles.inlineRow}>
-          <TextInput value={token} onChangeText={setToken} placeholder="Driver token" placeholderTextColor={palette.muted} autoCapitalize="none" autoCorrect={false} secureTextEntry style={styles.inlineInput} />
-          <ActionButton label={busy ? '…' : 'Login'} onPress={() => connect()} primary disabled={busy} />
-        </View>
-        {message ? <Text style={styles.message}>{message}</Text> : null}
+      <View style={styles.section}>
+        <Text style={styles.title}>Cab Partner</Text>
+        <Text style={styles.itemMeta}>{busy ? 'Opening your driver account…' : message}</Text>
+        {!busy ? <ActionButton label="Try again" onPress={load} primary /> : null}
       </View>
     );
   }
 
   return (
-    <View>
+    <View style={styles.section}>
       <View style={styles.driverHeader}>
         <View style={styles.flex}>
-          <Text style={styles.itemTitle}>{driver?.name || 'Driver'}</Text>
-          <Text style={styles.itemMeta}>{driver?.cab ? `${driver.cab.cab_ref} · ${driver.cab.plate_no} · ${CATEGORY_LABELS[driver.cab.category] || driver.cab.category}` : ''}</Text>
+          <Text style={styles.title}>{driver.name || 'Driver'}</Text>
+          <Text style={styles.itemMeta}>{driver.cab ? `${driver.cab.cab_ref} · ${driver.cab.plate_no} · ${CATEGORY_LABELS[driver.cab.category] || driver.cab.category}` : ''}</Text>
         </View>
-        <ActionButton label="Logout" onPress={logout} />
       </View>
       <Pressable onPress={toggleOnline} disabled={busy} style={[styles.onlineToggle, online ? styles.onlineToggleOn : styles.onlineToggleOff]}>
-        <Text style={[styles.onlineToggleTitle, online && styles.onlineToggleTitleOn]}>{online ? 'ONLINE — Booking Available' : 'OFFLINE — Not Available'}</Text>
+        <Text style={[styles.onlineToggleTitle, online && styles.onlineToggleTitleOn]}>{online ? 'ONLINE — Ready for bookings' : 'OFFLINE — Not available'}</Text>
         <Text style={[styles.onlineToggleSub, online && styles.onlineToggleSubOn]}>{busy ? 'Please wait…' : online ? 'Tap to go offline' : 'Tap to go online and receive bookings'}</Text>
       </Pressable>
       {message ? <Text style={styles.message}>{message}</Text> : null}
@@ -230,7 +184,7 @@ function DriverMode() {
                 <Text style={styles.itemMeta}>Reply within 60 seconds, or the booking goes to the next cab.</Text>
                 <View style={[styles.inlineRow, styles.offerActions]}>
                   <ActionButton label="Accept" onPress={() => respond(booking.id, 'ACCEPT')} primary />
-                  <ActionButton label="Reject" onPress={() => respond(booking.id, 'REJECT')} />
+                  <ActionButton label="Decline" onPress={() => respond(booking.id, 'REJECT')} />
                 </View>
               </>
             ) : stages[booking.driver_status] ? (
@@ -245,72 +199,77 @@ function DriverMode() {
   );
 }
 
-function AdminMode() {
-  const [apiKey, setApiKey] = useState('');
+// A vehicle owner's cabs and drivers.
+export function OwnerFleet() {
+  const [fleet, setFleet] = useState(null);
+  const [message, setMessage] = useState('');
+
+  useEffect(() => {
+    const load = () => apiRequest('/partner/fleet')
+      .then((result) => setFleet(result.fleet || []))
+      .catch((error) => setMessage(error.message || 'Could not load your cabs.'));
+    load();
+    const interval = setInterval(load, 20000);
+    return () => clearInterval(interval);
+  }, []);
+
+  return (
+    <View style={styles.section}>
+      <Text style={styles.title}>My cabs</Text>
+      <Text style={styles.subtitle}>Your vehicles and drivers on SadakYatra.</Text>
+      {message ? <Text style={styles.message}>{message}</Text> : null}
+      {fleet && !fleet.length ? <Text style={styles.itemMeta}>No approved cabs yet.</Text> : null}
+      {(fleet || []).map((cab) => (
+        <View key={cab.vehicle_id} style={styles.listItem}>
+          <Text style={styles.itemTitle}>{cab.cab_ref} · {cab.plate_no}</Text>
+          <View style={styles.badgeRow}>
+            <Text style={[styles.badge, cab.is_online ? styles.badgeOnline : styles.badgeOffline]}>{cab.is_online ? 'ONLINE' : 'OFFLINE'}</Text>
+            <Text style={[styles.badge, cab.current_booking_ref ? styles.badgeBusy : styles.badgeFree]}>{cab.current_booking_ref ? 'ON TRIP' : 'FREE'}</Text>
+            {!cab.partner_active || !cab.vehicle_active ? <Text style={[styles.badge, styles.badgeOffline]}>PAUSED BY SADAKYATRA</Text> : null}
+          </View>
+          <Text style={styles.itemMeta}>{CATEGORY_LABELS[cab.category] || cab.category} {cab.model || ''} · Driver {cab.driver_name} ({cab.driver_phone})</Text>
+          {cab.current_booking_ref ? <Text style={styles.itemMeta}>{cab.current_booking_ref} · {(cab.current_driver_status || '').replaceAll('_', ' ')}</Text> : null}
+        </View>
+      ))}
+    </View>
+  );
+}
+
+export function AdminDashboard({ account }) {
+  const canPartners = account.permissions.includes('partners');
+  const canBookings = account.permissions.includes('bookings');
+  const canAdmins = account.permissions.includes('admins');
   const [applications, setApplications] = useState([]);
   const [partners, setPartners] = useState([]);
   const [bookings, setBookings] = useState([]);
+  const [admins, setAdmins] = useState([]);
   const [docs, setDocs] = useState({});
   const [verifiedPhones, setVerifiedPhones] = useState({});
   const [gpsDevices, setGpsDevices] = useState({});
-  const [driverToken, setDriverToken] = useState('');
   const [message, setMessage] = useState('');
-
-  const [activeKey, setActiveKey] = useState('');
-
-  useEffect(() => {
-    SecureStore.getItemAsync(ADMIN_KEY_KEY)
-      .then((saved) => { if (saved) setActiveKey(saved); })
-      .catch(() => {});
-  }, []);
 
   // Keep the dashboard current while it is open.
   useEffect(() => {
-    if (!activeKey) return undefined;
     load();
     const interval = setInterval(() => load(true), 15000);
     return () => clearInterval(interval);
-  }, [activeKey]);
-
-  async function request(path, method = 'GET', body) {
-    return partnerAdminRequest(path, method, body, activeKey);
-  }
-
-  async function login() {
-    const key = apiKey.trim();
-    if (!key) return setMessage('Enter the admin key.');
-    try {
-      await partnerAdminRequest('/admin/partners', 'GET', undefined, key);
-      await SecureStore.setItemAsync(ADMIN_KEY_KEY, key).catch(() => {});
-      setApiKey('');
-      setMessage('');
-      setActiveKey(key);
-    } catch (error) {
-      setMessage(error.message || 'Wrong admin key.');
-    }
-  }
-
-  async function logout() {
-    await SecureStore.deleteItemAsync(ADMIN_KEY_KEY).catch(() => {});
-    setActiveKey('');
-    setApplications([]);
-    setPartners([]);
-    setBookings([]);
-  }
+  }, []);
 
   async function load(quiet = false) {
     if (!quiet) setMessage('');
-    // Load each section independently so one failing source (e.g. applications
-    // when Supabase is down) doesn't hide the fleet and bookings.
-    const [applicationResult, partnerResult, bookingResult] = await Promise.allSettled([
-      request('/admin/partners/applications'),
-      request('/admin/partners'),
-      request('/admin/bookings')
-    ]);
-    if (applicationResult.status === 'fulfilled') setApplications(applicationResult.value.applications || []);
-    if (partnerResult.status === 'fulfilled') setPartners(partnerResult.value.partners || []);
-    if (bookingResult.status === 'fulfilled') setBookings(bookingResult.value.bookings || []);
-    const errors = [applicationResult, partnerResult, bookingResult]
+    // Load each section independently so one failure doesn't hide the rest.
+    const sections = [
+      canPartners ? apiRequest('/admin/partners/applications') : null,
+      canPartners || canBookings ? apiRequest('/admin/partners').catch((error) => (canPartners ? Promise.reject(error) : { partners: [] })) : null,
+      canBookings ? apiRequest('/admin/bookings') : null,
+      canAdmins ? apiRequest('/admin/admins') : null
+    ];
+    const [applicationResult, partnerResult, bookingResult, adminResult] = await Promise.allSettled(sections);
+    if (applicationResult.value) setApplications(applicationResult.value.applications || []);
+    if (partnerResult.value) setPartners(partnerResult.value.partners || []);
+    if (bookingResult.value) setBookings(bookingResult.value.bookings || []);
+    if (adminResult.value) setAdmins(adminResult.value.admins || []);
+    const errors = [applicationResult, partnerResult, bookingResult, adminResult]
       .filter((result) => result.status === 'rejected')
       .map((result) => result.reason?.message || 'Could not load admin data.');
     if (errors.length && !quiet) setMessage([...new Set(errors)].join('\n'));
@@ -325,15 +284,14 @@ function AdminMode() {
 
   async function approve(application) {
     try {
-      const result = await request(`/admin/partners/applications/${application.id}/approve`, 'POST', {
+      const result = await apiRequest(`/admin/partners/applications/${application.id}/approve`, 'POST', {
         phoneVerified: verifiedPhones[application.id] === true,
         rcDocumentKey: docs[application.id]?.rc,
         dlDocumentKey: docs[application.id]?.dl,
         insuranceDocumentKey: docs[application.id]?.insurance
       });
-      setDriverToken(result.driverAccessToken);
-      setMessage(`${application.application_ref} approved. Hand the one-time token to the driver securely.`);
-      await load();
+      setMessage(`${application.application_ref}: ${result.message}`);
+      await load(true);
     } catch (error) {
       setMessage(error.message || 'Could not approve application.');
     }
@@ -341,7 +299,7 @@ function AdminMode() {
 
   async function reject(applicationId) {
     try {
-      await request(`/admin/partners/applications/${applicationId}`, 'PATCH', { status: 'REJECTED' });
+      await apiRequest(`/admin/partners/applications/${applicationId}`, 'PATCH', { status: 'REJECTED' });
       await load();
     } catch (error) {
       setMessage(error.message || 'Could not reject application.');
@@ -350,7 +308,7 @@ function AdminMode() {
 
   async function assign(bookingId, vehicleId) {
     try {
-      await request(`/admin/bookings/${bookingId}/assign`, 'POST', { vehicleId });
+      await apiRequest(`/admin/bookings/${bookingId}/assign`, 'POST', { vehicleId });
       setMessage('Booking sent to the driver.');
       await load(true);
     } catch (error) {
@@ -360,7 +318,7 @@ function AdminMode() {
 
   async function setPartnerActive(partnerId, active) {
     try {
-      await request(`/admin/partners/${partnerId}`, 'PATCH', { active });
+      await apiRequest(`/admin/partners/${partnerId}`, 'PATCH', { active });
       await load();
     } catch (error) {
       setMessage(error.message || 'Could not update partner status.');
@@ -370,7 +328,7 @@ function AdminMode() {
   async function saveGpsDevice(vehicleId) {
     try {
       const gpsDeviceId = (gpsDevices[vehicleId] || '').trim() || null;
-      await request(`/admin/vehicles/${vehicleId}`, 'PATCH', { gpsDeviceId });
+      await apiRequest(`/admin/vehicles/${vehicleId}`, 'PATCH', { gpsDeviceId });
       setMessage(gpsDeviceId ? 'GPS tracker linked to this cab.' : 'GPS tracker removed from this cab.');
       await load();
     } catch (error) {
@@ -380,7 +338,7 @@ function AdminMode() {
 
   async function setVehicleActive(vehicleId, active) {
     try {
-      await request(`/admin/vehicles/${vehicleId}`, 'PATCH', { active });
+      await apiRequest(`/admin/vehicles/${vehicleId}`, 'PATCH', { active });
       await load();
     } catch (error) {
       setMessage(error.message || 'Could not update cab status.');
@@ -388,30 +346,24 @@ function AdminMode() {
   }
 
   return (
-    <View>
-      {!activeKey ? (
-        <>
-          <Text style={styles.disclosure}>Enter the admin key once; it is stored securely on this phone until you log out.</Text>
-          <View style={styles.inlineRow}>
-            <TextInput value={apiKey} onChangeText={setApiKey} placeholder="Admin key" placeholderTextColor={palette.muted} secureTextEntry autoCapitalize="none" style={styles.inlineInput} />
-            <ActionButton label="Login" onPress={login} primary />
-          </View>
-          {message ? <Text style={styles.message}>{message}</Text> : null}
-        </>
-      ) : (
-        <View style={styles.inlineRow}>
-          <Text style={[styles.itemMeta, styles.flex]}>Bookings go automatically to the nearest free online cab. Use the buttons below only to override.</Text>
-          <ActionButton label="Refresh" onPress={() => load()} />
-          <ActionButton label="Logout" onPress={logout} />
+    <View style={styles.section}>
+      <View style={styles.inlineRow}>
+        <View style={styles.flex}>
+          <Text style={styles.title}>Admin</Text>
+          <Text style={styles.itemMeta}>{account.roles.includes('owner') ? 'Owner · full access' : `Access: ${account.permissions.map((item) => PERMISSION_LABELS[item] || item).join(', ')}`}</Text>
         </View>
-      )}
-      {activeKey && message ? <Text style={styles.message}>{message}</Text> : null}
-      {driverToken ? <View style={styles.listItem}><Text style={styles.itemTitle}>One-time driver token</Text><Text selectable style={styles.itemText}>{driverToken}</Text></View> : null}
+        <ActionButton label="Refresh" onPress={() => load()} />
+      </View>
+      {message ? <Text style={styles.message}>{message}</Text> : null}
+
+      {canPartners ? <Text style={styles.groupTitle}>Partner registrations · {applications.length}</Text> : null}
+      {canPartners && !applications.length ? <Text style={styles.itemMeta}>No new registrations.</Text> : null}
       {applications.map((application) => (
         <View key={application.id} style={styles.listItem}>
           <Text style={styles.itemTitle}>{application.application_ref} · {application.full_name}</Text>
-          <Text style={styles.itemText}>{application.phone} · {application.vehicle_number} · {application.vehicle_category} {application.vehicle_model}</Text>
-          <Text style={styles.itemMeta}>{application.city}: {application.operating_area} · Driver {application.driver_name}</Text>
+          <Text style={styles.itemText}>{application.partner_type === 'vehicle_owner' ? 'Vehicle owner' : 'Driver'} · +91 {application.phone}{application.phone_verified ? ' ✓ OTP verified' : ''}</Text>
+          <Text style={styles.itemText}>{application.vehicle_number} · {CATEGORY_LABELS[application.vehicle_category] || application.vehicle_category} {application.vehicle_model}{application.seats ? ` · ${application.seats} seats` : ''}</Text>
+          <Text style={styles.itemMeta}>{application.city}: {application.operating_area} · Driver {application.driver_name} (+91 {application.driver_phone})</Text>
           {[
             ['rc', 'RC document path (optional)'],
             ['dl', 'DL document path (optional)'],
@@ -419,16 +371,19 @@ function AdminMode() {
           ].map(([field, label]) => (
             <TextInput key={field} value={docs[application.id]?.[field] || ''} onChangeText={(value) => updateDoc(application.id, field, value)} placeholder={label} placeholderTextColor={palette.muted} autoCapitalize="none" style={styles.formInput} />
           ))}
-          <Pressable onPress={() => setVerifiedPhones((current) => ({ ...current, [application.id]: !current[application.id] }))} style={styles.verifyRow}>
-            <Text style={styles.itemText}>{verifiedPhones[application.id] ? '☑' : '□'} Phone verified by admin</Text>
-          </Pressable>
-          <View style={styles.inlineRow}>
+          {!application.phone_verified ? (
+            <Pressable onPress={() => setVerifiedPhones((current) => ({ ...current, [application.id]: !current[application.id] }))} style={styles.verifyRow}>
+              <Text style={styles.itemText}>{verifiedPhones[application.id] ? '☑' : '□'} Phone verified by admin</Text>
+            </Pressable>
+          ) : null}
+          <View style={[styles.inlineRow, styles.offerActions]}>
             <ActionButton label="Approve" onPress={() => approve(application)} primary />
             <ActionButton label="Reject" onPress={() => reject(application.id)} />
           </View>
         </View>
       ))}
-      {activeKey ? (
+
+      {canBookings ? (
         <Text style={styles.groupTitle}>Waiting bookings · {bookings.filter((booking) => booking.status === 'PENDING').length}</Text>
       ) : null}
       {bookings.filter((booking) => booking.status === 'PENDING').map((booking) => {
@@ -458,13 +413,14 @@ function AdminMode() {
           </View>
         );
       })}
-      {partners.length ? (
+
+      {canPartners && partners.length ? (
         <>
           <Text style={styles.groupTitle}>Fleet · {partners.filter((p) => p.is_online).length} online · {partners.filter((p) => p.current_booking_ref).length} on booking</Text>
           <FleetMap partners={partners} />
         </>
       ) : null}
-      {partners.map((partner) => {
+      {canPartners ? partners.map((partner) => {
         const busy = Boolean(partner.current_booking_ref);
         return (
           <View key={`${partner.vehicle_id}-${partner.driver_phone}`} style={styles.listItem}>
@@ -476,7 +432,7 @@ function AdminMode() {
             </View>
             <Text style={styles.itemMeta}>{CATEGORY_LABELS[partner.category] || partner.category} {partner.model || ''} · {partner.driver_phone}</Text>
             {busy ? <Text style={styles.itemMeta}>{partner.current_booking_ref}: {partner.current_pickup} → {partner.current_drop} · {(partner.current_driver_status || '').replaceAll('_', ' ')}</Text> : null}
-            <Text style={styles.itemMeta}>{partner.latitude == null ? 'No live location' : `Location ${partner.latitude.toFixed(4)}, ${partner.longitude?.toFixed(4)} · updated ${partner.location_updated_at} UTC`}</Text>
+            <Text style={styles.itemMeta}>{partner.latitude == null ? 'No live location' : `Location ${partner.latitude.toFixed(4)}, ${partner.longitude?.toFixed(4)} · updated ${formatPickupTime(partner.location_updated_at)}`}</Text>
             <View style={styles.inlineRow}>
               <TextInput
                 value={gpsDevices[partner.vehicle_id] ?? partner.gps_device_id ?? ''}
@@ -494,14 +450,78 @@ function AdminMode() {
             </View>
           </View>
         );
-      })}
+      }) : null}
+
+      {canBookings ? <Text style={styles.groupTitle}>Recent bookings</Text> : null}
       {bookings.filter((booking) => booking.status !== 'PENDING').slice(0, 15).map((booking) => (
         <View key={booking.id} style={styles.listItem}>
           <Text style={styles.itemTitle}>{booking.booking_ref} · {booking.pickup_text} → {booking.drop_text}</Text>
           <Text style={styles.itemMeta}>{booking.status} · {(booking.driver_status || 'Not assigned').replaceAll('_', ' ')}</Text>
         </View>
       ))}
+
+      {canAdmins ? <AdminAccounts admins={admins} onChanged={() => load(true)} onMessage={setMessage} /> : null}
     </View>
+  );
+}
+
+// Owner only: give staff access to chosen sections by mobile number.
+function AdminAccounts({ admins, onChanged, onMessage }) {
+  const [phone, setPhone] = useState('');
+  const [fullName, setFullName] = useState('');
+  const [permissions, setPermissions] = useState(['bookings']);
+
+  function togglePermission(permission) {
+    setPermissions((current) => (current.includes(permission) ? current.filter((item) => item !== permission) : [...current, permission]));
+  }
+
+  async function addAdmin() {
+    try {
+      await apiRequest('/admin/admins', 'POST', { phone, fullName, permissions });
+      onMessage(`Admin added. They can now log in with +91 ${phone.replace(/\D/g, '').slice(-10)}.`);
+      setPhone('');
+      setFullName('');
+      onChanged();
+    } catch (error) {
+      onMessage(error.message || 'Could not add admin.');
+    }
+  }
+
+  function removeAdmin(admin) {
+    Alert.alert('Remove admin?', `${admin.full_name || ''} +91 ${admin.phone} will lose admin access.`, [
+      { text: 'Keep', style: 'cancel' },
+      {
+        text: 'Remove',
+        style: 'destructive',
+        onPress: () => apiRequest(`/admin/admins/${admin.id}`, 'DELETE').then(onChanged).catch((error) => onMessage(error.message))
+      }
+    ]);
+  }
+
+  return (
+    <>
+      <Text style={styles.groupTitle}>Admin accounts · {admins.length}</Text>
+      {admins.map((admin) => (
+        <View key={admin.id} style={styles.listItem}>
+          <Text style={styles.itemTitle}>{admin.full_name || 'Admin'} · +91 {admin.phone}</Text>
+          <Text style={styles.itemMeta}>{admin.permissions.map((item) => PERMISSION_LABELS[item] || item).join(', ')}</Text>
+          <View style={styles.offerActions}><ActionButton label="Remove" onPress={() => removeAdmin(admin)} /></View>
+        </View>
+      ))}
+      <View style={styles.listItem}>
+        <Text style={styles.itemTitle}>Add an admin</Text>
+        <TextInput value={fullName} onChangeText={setFullName} placeholder="Name" placeholderTextColor={palette.muted} style={styles.formInput} />
+        <TextInput value={phone} onChangeText={setPhone} placeholder="Mobile number" keyboardType="phone-pad" placeholderTextColor={palette.muted} style={styles.formInput} />
+        <View style={[styles.badgeRow, styles.offerActions]}>
+          {Object.entries(PERMISSION_LABELS).map(([permission, label]) => (
+            <Pressable key={permission} onPress={() => togglePermission(permission)} style={[styles.vehicleChoice, permissions.includes(permission) && styles.vehicleChoiceActive]}>
+              <Text style={styles.vehicleChoiceText}>{permissions.includes(permission) ? '☑' : '□'} {label}</Text>
+            </Pressable>
+          ))}
+        </View>
+        <View style={styles.offerActions}><ActionButton label="Add admin" onPress={addAdmin} primary /></View>
+      </View>
+    </>
   );
 }
 
