@@ -24,6 +24,7 @@ import { AdminDashboard, DriverDashboard, OwnerFleet, signOutDriver } from './sr
 import {
   LoadingScreen, OtpLoginScreen, PartnerSignupScreen, PartnerStatusScreen, ProfileScreen, RoleShell, VIEW_LABELS, WelcomeScreen
 } from './src/components/AuthFlow';
+import { CHANNELS, alertLocal, hasRemotePush, registerForPush, unregisterPush } from './src/notifications';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as SecureStore from 'expo-secure-store';
 import {
@@ -102,12 +103,24 @@ function normalizePhone(value) {
 const CATEGORY_NAMES = { sedan: 'Sedan', suv: 'SUV', traveller: 'Tempo Traveller' };
 
 const BOOKING_STATUS = {
-  PENDING: { label: 'Finding cab', style: 'statusPending' },
-  CONFIRMED: { label: 'Confirmed', style: 'statusConfirmed' },
+  PENDING_APPROVAL: { label: 'Awaiting approval', style: 'statusPending' },
+  ON_HOLD: { label: 'Being reviewed', style: 'statusPending' },
+  APPROVED: { label: 'Finding driver', style: 'statusPending' },
+  DRIVER_NOT_FOUND: { label: 'Finding driver', style: 'statusPending' },
+  REJECTED: { label: 'Not accepted', style: 'statusCancelled' },
+  CONFIRMED: { label: 'Driver assigned', style: 'statusConfirmed' },
   ONGOING: { label: 'On trip', style: 'statusOngoing' },
   COMPLETED: { label: 'Completed', style: 'statusCompleted' },
   CANCELLED: { label: 'Cancelled', style: 'statusCancelled' }
 };
+const DRIVER_STAGE_LABELS = { GOING_TO_PICKUP: 'Driver on the way', ARRIVED: 'Driver arrived' };
+
+// Customer-facing status, including whether the driver is on the way.
+function bookingStatus(booking) {
+  const base = BOOKING_STATUS[booking.status] || { label: booking.status };
+  const stage = booking.status === 'CONFIRMED' && DRIVER_STAGE_LABELS[booking.driver_status];
+  return stage ? { ...base, label: stage } : base;
+}
 
 function defaultTripDate() {
   const date = new Date(Date.now() + 60 * 60 * 1000);
@@ -408,6 +421,7 @@ function Root() {
         setAccount(saved.account);
         setView(defaultView(saved.account, null));
         getMe().then((me) => applyAccount(me.account)).catch(() => {});
+        registerForPush().catch(() => {});
       })
       .catch(() => {})
       .finally(() => setBooting(false));
@@ -416,6 +430,7 @@ function Root() {
   async function onLoggedIn(token, loginAccount) {
     tokenRef.current = token;
     setAuthToken(token);
+    registerForPush().catch(() => {});
     const fullAccount = await getMe().then((me) => me.account).catch(() => loginAccount);
     setAccount(fullAccount);
     persist(fullAccount);
@@ -423,6 +438,7 @@ function Root() {
   }
 
   async function logout() {
+    await unregisterPush();
     if (account?.roles.includes('driver')) await signOutDriver();
     await logoutSession().catch(() => {});
     clearSession();
@@ -596,7 +612,7 @@ function SadakYatraApp({ account, views, onSwitchView, onLogout, onJoinPartner }
 
       Alert.alert(
         'Booking requested',
-        `${booking.booking_ref}${booking.estimated_fare ? ` · ${rupees(booking.estimated_fare)}` : ''}\nWe are sending it to the nearest cab. Track it live here.`
+        `${booking.booking_ref}${booking.estimated_fare ? ` · ${rupees(booking.estimated_fare)}` : ''}\nSadakYatra will confirm it shortly. You will be notified when a driver is assigned.`
       );
       goTo('bookings');
       fetchBookings();
@@ -635,6 +651,25 @@ function SadakYatraApp({ account, views, onSwitchView, onLogout, onJoinPartner }
     return loadBookingDetails(id)
       .catch((err) => setBookingError(err.message || 'Could not load booking details.'));
   }
+
+  const lastStatuses = useRef(null);
+  useEffect(() => {
+    const check = () => listBookings().then((data) => {
+      const latest = data.bookings || [];
+      const statuses = new Map(latest.map((booking) => [booking.id, bookingStatus(booking).label]));
+      if (lastStatuses.current && !hasRemotePush()) {
+        latest.forEach((booking) => {
+          const before = lastStatuses.current.get(booking.id);
+          if (before && before !== statuses.get(booking.id)) alertLocal(`${booking.booking_ref}: ${statuses.get(booking.id)}`, `${booking.pickup_text} → ${booking.drop_text}`, CHANNELS.trips);
+        });
+      }
+      lastStatuses.current = statuses;
+      setBookings(latest);
+    }).catch(() => {});
+    check();
+    const interval = setInterval(check, 30000);
+    return () => clearInterval(interval);
+  }, []);
 
   // While a trip is open, keep its status, timeline and cab position fresh.
   useEffect(() => {
@@ -1243,10 +1278,10 @@ function AboutScreen({ lastTrip }) {
 
 function BookingsScreen({ phone, bookings, loading, error, selectedBooking, tracking, events, onRefresh, onSelectBooking, onCancel, onBook, onBack }) {
   if (selectedBooking) {
-    const status = BOOKING_STATUS[selectedBooking.status] || { label: selectedBooking.status };
+    const status = bookingStatus(selectedBooking);
     let fare = null;
     try { fare = selectedBooking.fare_breakdown ? JSON.parse(selectedBooking.fare_breakdown) : null; } catch { fare = null; }
-    const canCancel = ['PENDING', 'CONFIRMED'].includes(selectedBooking.status);
+    const canCancel = ['PENDING_APPROVAL', 'ON_HOLD', 'APPROVED', 'DRIVER_NOT_FOUND', 'CONFIRMED'].includes(selectedBooking.status);
     return (
       <View style={styles.statusCardOuter}>
         <Pressable style={styles.backLink} onPress={onBack}>
@@ -1332,7 +1367,7 @@ function BookingsScreen({ phone, bookings, loading, error, selectedBooking, trac
         </View>
       ) : null}
       {bookings.map((booking) => {
-        const status = BOOKING_STATUS[booking.status] || { label: booking.status };
+        const status = bookingStatus(booking);
         return (
           <Pressable key={booking.id} style={styles.bookingRow} onPress={() => onSelectBooking(booking.id)}>
             <View style={styles.bookingSummary}>

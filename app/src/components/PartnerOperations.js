@@ -1,9 +1,9 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Alert, Linking, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import * as Location from 'expo-location';
 import MapView, { Marker } from 'react-native-maps';
 import { apiRequest } from '../api/client';
-import { alertNewOffer, getDriverPushToken } from '../notifications';
+import { CHANNELS, alertLocal, hasRemotePush } from '../notifications';
 
 const CATEGORY_LABELS = { sedan: 'Sedan', suv: 'SUV', traveller: 'Tempo Traveller' };
 const PERMISSION_LABELS = { bookings: 'Bookings', partners: 'Partners & fleet', pricing: 'Pricing' };
@@ -21,22 +21,22 @@ const stages = {
   TRIP_STARTED: 'TRIP_COMPLETED'
 };
 
-// Before logging out on this phone: stop offers ringing it and take the driver offline.
+// Before logging out on this phone: take the driver offline.
 export async function signOutDriver() {
-  await apiRequest('/driver/push-token', 'POST', { token: null }).catch(() => {});
   await apiRequest('/driver/presence', 'PATCH', { online: false }).catch(() => {});
 }
+
+const SERVICE_NAMES = { OUTSTATION: 'Outstation', AIRPORT: 'Airport', WEDDING: 'Wedding', LOCAL: 'Local' };
 
 export function DriverDashboard() {
   const [driver, setDriver] = useState(null);
   const [online, setOnline] = useState(false);
-  const [bookings, setBookings] = useState([]);
+  const [trips, setTrips] = useState([]);
+  const [offers, setOffers] = useState([]);
   const [message, setMessage] = useState('');
   const [busy, setBusy] = useState(false);
   const locationSubscription = useRef(null);
   const seenOffers = useRef(new Set());
-  // True once the backend can ring this phone with a real push; then skip the in-app alert.
-  const hasRemotePush = useRef(false);
 
   useEffect(() => {
     load();
@@ -55,7 +55,6 @@ export function DriverDashboard() {
     try {
       const me = await apiRequest('/driver/me');
       setDriver(me.driver);
-      registerPush().catch(() => {});
       await refresh();
       if (me.driver.online) {
         await startLocationSharing().catch(() => {});
@@ -70,20 +69,14 @@ export function DriverDashboard() {
 
   async function refresh() {
     const result = await apiRequest('/driver/bookings');
-    const latest = result.bookings || [];
-    for (const booking of latest) {
-      if (booking.driver_status !== 'OFFERED' || seenOffers.current.has(booking.id)) continue;
-      seenOffers.current.add(booking.id);
-      if (!hasRemotePush.current) alertNewOffer(booking);
+    const latestOffers = result.offers || [];
+    for (const offer of latestOffers) {
+      if (seenOffers.current.has(offer.id)) continue;
+      seenOffers.current.add(offer.id);
+      if (!hasRemotePush()) alertLocal('New booking available', `${offer.pickup_text} → ${offer.drop_text}`, CHANNELS.offers);
     }
-    setBookings(latest);
-  }
-
-  async function registerPush() {
-    const pushToken = await getDriverPushToken();
-    if (!pushToken) return;
-    await apiRequest('/driver/push-token', 'POST', { token: pushToken });
-    hasRemotePush.current = true;
+    setOffers(latestOffers);
+    setTrips(result.bookings || []);
   }
 
   async function startLocationSharing() {
@@ -110,6 +103,7 @@ export function DriverDashboard() {
         locationSubscription.current = null;
         await apiRequest('/driver/presence', 'PATCH', { online: false });
         setOnline(false);
+        setOffers([]);
         return;
       }
       await startLocationSharing();
@@ -126,12 +120,11 @@ export function DriverDashboard() {
   async function respond(bookingId, decision) {
     try {
       await apiRequest(`/driver/bookings/${bookingId}/response`, 'PATCH', { decision });
-      setMessage(decision === 'ACCEPT' ? 'Booking accepted. Tap "Going to pickup" when you leave.' : 'Booking declined.');
-      await refresh();
+      setMessage(decision === 'ACCEPT' ? 'Booking confirmed for you. Tap "Going to pickup" when you leave.' : 'Booking declined.');
     } catch (error) {
       setMessage(error.message || 'Could not respond to booking.');
-      await refresh().catch(() => {});
     }
+    await refresh().catch(() => {});
   }
 
   async function advance(bookingId, status) {
@@ -166,35 +159,44 @@ export function DriverDashboard() {
         <Text style={[styles.onlineToggleSub, online && styles.onlineToggleSubOn]}>{busy ? 'Please wait…' : online ? 'Tap to go offline' : 'Tap to go online and receive bookings'}</Text>
       </Pressable>
       {message ? <Text style={styles.message}>{message}</Text> : null}
-      {bookings.length === 0 ? (
-        <Text style={styles.itemMeta}>{online ? 'Waiting for bookings… new requests appear here automatically.' : 'Go online to receive bookings.'}</Text>
+
+      <Text style={styles.groupTitle}>New requests · {offers.length}</Text>
+      {!offers.length ? (
+        <Text style={styles.itemMeta}>{online ? 'Approved bookings for your cab appear here automatically.' : 'Go online to receive bookings.'}</Text>
       ) : null}
-      {bookings.map((booking) => {
-        const isOffer = booking.driver_status === 'OFFERED';
-        return (
-          <View key={booking.id} style={[styles.listItem, isOffer && styles.offerCard]}>
-            <Text style={styles.offerLabel}>{isOffer ? 'New Booking' : (booking.driver_status || '').replaceAll('_', ' ')}</Text>
-            <Text style={styles.itemText}>Pickup: {booking.pickup_text}</Text>
-            <Text style={styles.itemText}>Drop: {booking.drop_text}</Text>
-            <Text style={styles.itemText}>Vehicle: {CATEGORY_LABELS[booking.car_category] || booking.car_category}</Text>
-            <Text style={styles.itemText}>Pickup Time: {formatPickupTime(booking.trip_datetime)}</Text>
-            <Text style={styles.itemMeta}>{booking.booking_ref}{booking.route_distance_km ? ` · ${booking.route_distance_km} km` : ''}{booking.estimated_fare ? ` · Fare ₹${booking.estimated_fare}` : ''}</Text>
-            {isOffer ? (
-              <>
-                <Text style={styles.itemMeta}>Reply within 60 seconds, or the booking goes to the next cab.</Text>
-                <View style={[styles.inlineRow, styles.offerActions]}>
-                  <ActionButton label="Accept" onPress={() => respond(booking.id, 'ACCEPT')} primary />
-                  <ActionButton label="Decline" onPress={() => respond(booking.id, 'REJECT')} />
-                </View>
-              </>
-            ) : stages[booking.driver_status] ? (
-              <View style={styles.offerActions}>
-                <ActionButton label={stages[booking.driver_status].replaceAll('_', ' ')} onPress={() => advance(booking.id, stages[booking.driver_status])} primary />
-              </View>
-            ) : null}
+      {offers.map((offer) => (
+        <View key={offer.id} style={[styles.listItem, styles.offerCard]}>
+          <Text style={styles.offerLabel}>New Booking · {offer.booking_ref}</Text>
+          <Text style={styles.itemText}>Pickup: {offer.pickup_text}</Text>
+          <Text style={styles.itemText}>Drop: {offer.drop_text}</Text>
+          <Text style={styles.itemText}>{formatPickupTime(offer.trip_datetime)} · {SERVICE_NAMES[offer.service_type] || offer.service_type} · {CATEGORY_LABELS[offer.car_category] || offer.car_category}</Text>
+          <Text style={styles.itemMeta}>{offer.route_distance_km ? `${offer.route_distance_km} km` : 'Local'}{offer.estimated_fare ? ` · Trip fare ₹${offer.estimated_fare}` : ''}</Text>
+          <Text style={styles.itemMeta}>The first driver to accept gets this booking.</Text>
+          <View style={[styles.inlineRow, styles.offerActions]}>
+            <ActionButton label="Accept" onPress={() => respond(offer.id, 'ACCEPT')} primary />
+            <ActionButton label="Decline" onPress={() => respond(offer.id, 'REJECT')} />
           </View>
-        );
-      })}
+        </View>
+      ))}
+
+      <Text style={styles.groupTitle}>My trips · {trips.length}</Text>
+      {!trips.length ? <Text style={styles.itemMeta}>No upcoming trips.</Text> : null}
+      {trips.map((trip) => (
+        <View key={trip.id} style={styles.listItem}>
+          <Text style={styles.offerLabel}>{(trip.driver_status || '').replaceAll('_', ' ')} · {trip.booking_ref}</Text>
+          <Text style={styles.itemText}>Pickup: {trip.pickup_text}</Text>
+          <Text style={styles.itemText}>Drop: {trip.drop_text}</Text>
+          <Text style={styles.itemText}>{formatPickupTime(trip.trip_datetime)} · {CATEGORY_LABELS[trip.car_category] || trip.car_category}</Text>
+          <Pressable onPress={() => Linking.openURL(`tel:${trip.customer_phone}`)}>
+            <Text style={styles.callLink}>Customer: {trip.customer_name || 'Customer'} · Call +91 {trip.customer_phone}</Text>
+          </Pressable>
+          {stages[trip.driver_status] ? (
+            <View style={styles.offerActions}>
+              <ActionButton label={stages[trip.driver_status].replaceAll('_', ' ')} onPress={() => advance(trip.id, stages[trip.driver_status])} primary />
+            </View>
+          ) : null}
+        </View>
+      ))}
     </View>
   );
 }
@@ -243,6 +245,9 @@ export function AdminDashboard({ account }) {
   const [partners, setPartners] = useState([]);
   const [bookings, setBookings] = useState([]);
   const [admins, setAdmins] = useState([]);
+  const [overview, setOverview] = useState(null);
+  const [cabs, setCabs] = useState([]);
+  const seenPending = useRef(null);
   const [docs, setDocs] = useState({});
   const [verifiedPhones, setVerifiedPhones] = useState({});
   const [gpsDevices, setGpsDevices] = useState({});
@@ -262,17 +267,52 @@ export function AdminDashboard({ account }) {
       canPartners ? apiRequest('/admin/partners/applications') : null,
       canPartners || canBookings ? apiRequest('/admin/partners').catch((error) => (canPartners ? Promise.reject(error) : { partners: [] })) : null,
       canBookings ? apiRequest('/admin/bookings') : null,
-      canAdmins ? apiRequest('/admin/admins') : null
+      canAdmins ? apiRequest('/admin/admins') : null,
+      canBookings ? apiRequest('/admin/overview') : null,
+      canBookings ? apiRequest('/admin/cabs') : null
     ];
-    const [applicationResult, partnerResult, bookingResult, adminResult] = await Promise.allSettled(sections);
+    const results = await Promise.allSettled(sections);
+    const [applicationResult, partnerResult, bookingResult, adminResult, overviewResult, cabResult] = results;
     if (applicationResult.value) setApplications(applicationResult.value.applications || []);
     if (partnerResult.value) setPartners(partnerResult.value.partners || []);
-    if (bookingResult.value) setBookings(bookingResult.value.bookings || []);
+    if (bookingResult.value) {
+      const latest = bookingResult.value.bookings || [];
+      alertNewBookings(latest);
+      setBookings(latest);
+    }
     if (adminResult.value) setAdmins(adminResult.value.admins || []);
-    const errors = [applicationResult, partnerResult, bookingResult, adminResult]
+    if (overviewResult.value) setOverview(overviewResult.value);
+    if (cabResult.value) setCabs(cabResult.value.cabs || []);
+    const errors = results
       .filter((result) => result.status === 'rejected')
       .map((result) => result.reason?.message || 'Could not load admin data.');
     if (errors.length && !quiet) setMessage([...new Set(errors)].join('\n'));
+  }
+
+  // Without remote push (e.g. Expo Go), ring for bookings that arrived since the last refresh.
+  function alertNewBookings(latest) {
+    const pending = latest.filter((booking) => booking.status === 'PENDING_APPROVAL');
+    if (seenPending.current && !hasRemotePush()) {
+      pending.filter((booking) => !seenPending.current.has(booking.id)).forEach((booking) => {
+        alertLocal(`New booking · ${booking.booking_ref}`, `${booking.customer_name || 'Customer'} · ${booking.pickup_text} → ${booking.drop_text}`, CHANNELS.admin);
+      });
+    }
+    seenPending.current = new Set(pending.map((booking) => booking.id));
+  }
+
+  // Approve / hold / reject / cancel / assign; returns true when it worked.
+  async function bookingAction(booking, action, body) {
+    try {
+      const result = await apiRequest(`/admin/bookings/${booking.id}/${action}`, 'POST', body);
+      setMessage(action === 'approve'
+        ? `${booking.booking_ref} approved · sent to ${result.driversNotified} online driver${result.driversNotified === 1 ? '' : 's'}.`
+        : `${booking.booking_ref}: ${ADMIN_STATUS[result.booking.status] || result.booking.status}.`);
+      await load(true);
+      return true;
+    } catch (error) {
+      setMessage(error.message || 'Could not update the booking.');
+      return false;
+    }
   }
 
   function updateDoc(applicationId, field, value) {
@@ -303,16 +343,6 @@ export function AdminDashboard({ account }) {
       await load();
     } catch (error) {
       setMessage(error.message || 'Could not reject application.');
-    }
-  }
-
-  async function assign(bookingId, vehicleId) {
-    try {
-      await apiRequest(`/admin/bookings/${bookingId}/assign`, 'POST', { vehicleId });
-      setMessage('Booking sent to the driver.');
-      await load(true);
-    } catch (error) {
-      setMessage(error.message || 'Could not offer booking.');
     }
   }
 
@@ -383,36 +413,7 @@ export function AdminDashboard({ account }) {
         </View>
       ))}
 
-      {canBookings ? (
-        <Text style={styles.groupTitle}>Waiting bookings · {bookings.filter((booking) => booking.status === 'PENDING').length}</Text>
-      ) : null}
-      {bookings.filter((booking) => booking.status === 'PENDING').map((booking) => {
-        const offeredTo = booking.driver_status === 'OFFERED' ? partners.find((partner) => partner.driver_id === booking.driver_id) : null;
-        const freeCabs = partners.filter((partner) => partner.is_online && partner.vehicle_active && partner.partner_active
-          && partner.category === booking.car_category && !partner.current_booking_ref);
-        return (
-          <View key={booking.id} style={styles.listItem}>
-            <Text style={styles.itemTitle}>{booking.booking_ref} · {booking.pickup_text} → {booking.drop_text}</Text>
-            <Text style={styles.itemMeta}>{CATEGORY_LABELS[booking.car_category] || booking.car_category} · {formatPickupTime(booking.trip_datetime)}{booking.estimated_fare ? ` · ₹${booking.estimated_fare}` : ''}</Text>
-            <Text style={styles.dispatchStatus}>
-              {offeredTo
-                ? `Sent to ${offeredTo.cab_ref} (${offeredTo.driver_name}) — waiting for driver`
-                : freeCabs.length
-                  ? 'Finding nearest cab automatically…'
-                  : `No free ${CATEGORY_LABELS[booking.car_category] || booking.car_category} cab online. It will be sent as soon as one goes online.`}
-            </Text>
-            {freeCabs.length ? (
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.vehicleChoices}>
-                {freeCabs.map((cab) => (
-                  <Pressable key={cab.vehicle_id} onPress={() => assign(booking.id, cab.vehicle_id)} style={styles.vehicleChoice}>
-                    <Text style={styles.vehicleChoiceText}>Send to {cab.cab_ref} · {cab.driver_name}</Text>
-                  </Pressable>
-                ))}
-              </ScrollView>
-            ) : null}
-          </View>
-        );
-      })}
+      {canBookings ? <AdminBookings bookings={bookings} cabs={cabs} overview={overview} onAction={bookingAction} /> : null}
 
       {canPartners && partners.length ? (
         <>
@@ -452,16 +453,126 @@ export function AdminDashboard({ account }) {
         );
       }) : null}
 
-      {canBookings ? <Text style={styles.groupTitle}>Recent bookings</Text> : null}
-      {bookings.filter((booking) => booking.status !== 'PENDING').slice(0, 15).map((booking) => (
-        <View key={booking.id} style={styles.listItem}>
-          <Text style={styles.itemTitle}>{booking.booking_ref} · {booking.pickup_text} → {booking.drop_text}</Text>
-          <Text style={styles.itemMeta}>{booking.status} · {(booking.driver_status || 'Not assigned').replaceAll('_', ' ')}</Text>
-        </View>
-      ))}
-
       {canAdmins ? <AdminAccounts admins={admins} onChanged={() => load(true)} onMessage={setMessage} /> : null}
     </View>
+  );
+}
+
+// ---- Admin: booking approval ---------------------------------------------
+const ADMIN_STATUS = {
+  PENDING_APPROVAL: 'Awaiting approval',
+  ON_HOLD: 'On hold',
+  APPROVED: 'Searching for driver',
+  DRIVER_NOT_FOUND: 'No driver found',
+  CONFIRMED: 'Driver assigned',
+  ONGOING: 'Trip started',
+  COMPLETED: 'Completed',
+  CANCELLED: 'Cancelled',
+  REJECTED: 'Rejected'
+};
+const BOOKING_GROUPS = [
+  { title: 'Needs your approval', statuses: ['PENDING_APPROVAL', 'ON_HOLD'] },
+  { title: 'Searching for driver', statuses: ['APPROVED'] },
+  { title: 'No driver found', statuses: ['DRIVER_NOT_FOUND'] },
+  { title: 'Active trips', statuses: ['CONFIRMED', 'ONGOING'] }
+];
+const OVERVIEW = [
+  ['Pending', ['PENDING_APPROVAL', 'ON_HOLD']],
+  ['Searching', ['APPROVED', 'DRIVER_NOT_FOUND']],
+  ['Active', ['CONFIRMED', 'ONGOING']],
+  ['Completed', ['COMPLETED']],
+  ['Cancelled', ['CANCELLED', 'REJECTED']]
+];
+
+function AdminOverview({ overview }) {
+  if (!overview) return null;
+  return (
+    <View style={styles.overviewRow}>
+      {OVERVIEW.map(([label, statuses]) => (
+        <View key={label} style={styles.overviewTile}>
+          <Text style={styles.overviewValue}>{statuses.reduce((sum, status) => sum + (overview.counts[status] || 0), 0)}</Text>
+          <Text style={styles.overviewLabel}>{label}</Text>
+        </View>
+      ))}
+      <View style={styles.overviewTile}>
+        <Text style={styles.overviewValue}>{overview.onlineDrivers}</Text>
+        <Text style={styles.overviewLabel}>Drivers online</Text>
+      </View>
+    </View>
+  );
+}
+
+function AdminBookingCard({ booking, cabs, onAction }) {
+  const [reason, setReason] = useState('');
+  const [choosingCab, setChoosingCab] = useState(false);
+  const status = booking.status;
+  const open = ['PENDING_APPROVAL', 'ON_HOLD', 'APPROVED', 'DRIVER_NOT_FOUND'].includes(status);
+  // Matching vehicle type first, online cabs before offline ones.
+  const cabChoices = [...cabs].sort((a, b) => (b.category === booking.car_category) - (a.category === booking.car_category) || b.is_online - a.is_online);
+
+  const act = (action, body) => onAction(booking, action, body).then((done) => { if (done) { setReason(''); setChoosingCab(false); } });
+
+  return (
+    <View style={styles.listItem}>
+      <Text style={styles.itemTitle}>{booking.booking_ref} · {ADMIN_STATUS[status] || status}{booking.status === 'CONFIRMED' && booking.driver_status ? ` · ${booking.driver_status.replaceAll('_', ' ')}` : ''}</Text>
+      <Text style={styles.itemText}>{booking.pickup_text} → {booking.drop_text}</Text>
+      <Text style={styles.itemText}>{formatPickupTime(booking.trip_datetime)} · {CATEGORY_LABELS[booking.car_category] || booking.car_category}{booking.route_distance_km ? ` · ${booking.route_distance_km} km` : ''}{booking.estimated_fare ? ` · ₹${booking.estimated_fare}` : ''}</Text>
+      <Pressable onPress={() => Linking.openURL(`tel:${booking.customer_phone}`)}>
+        <Text style={styles.callLink}>{booking.customer_name || 'Customer'} · Call +91 {booking.customer_phone}</Text>
+      </Pressable>
+      {booking.driver_name ? <Text style={styles.itemMeta}>Driver: {booking.driver_name} (+91 {booking.driver_phone}) · {booking.cab_ref} {booking.plate_no}</Text> : null}
+      {status === 'APPROVED' ? <Text style={styles.dispatchStatus}>Sent to eligible online drivers{booking.declined_count ? ` · ${booking.declined_count} declined` : ''}. First to accept gets it.</Text> : null}
+      {booking.status_reason ? <Text style={styles.itemMeta}>Note: {booking.status_reason}</Text> : null}
+
+      {open || status === 'CONFIRMED' ? (
+        <TextInput value={reason} onChangeText={setReason} placeholder="Reason / note (optional)" placeholderTextColor={palette.muted} style={styles.formInput} />
+      ) : null}
+      <View style={[styles.badgeRow, styles.offerActions]}>
+        {['PENDING_APPROVAL', 'ON_HOLD', 'DRIVER_NOT_FOUND'].includes(status) ? (
+          <ActionButton label={status === 'DRIVER_NOT_FOUND' ? 'Send to drivers again' : 'Approve'} onPress={() => act('approve')} primary />
+        ) : null}
+        {open ? <ActionButton label={choosingCab ? 'Close cab list' : 'Assign cab'} onPress={() => setChoosingCab(!choosingCab)} /> : null}
+        {['PENDING_APPROVAL', 'APPROVED', 'DRIVER_NOT_FOUND'].includes(status) ? <ActionButton label="Hold" onPress={() => act('hold', { reason })} /> : null}
+        {open ? <ActionButton label="Reject" onPress={() => act('reject', { reason })} /> : null}
+        {status === 'CONFIRMED' ? <ActionButton label="Cancel booking" onPress={() => act('cancel', { reason })} /> : null}
+      </View>
+      {choosingCab ? (
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.vehicleChoices}>
+          {cabChoices.length ? cabChoices.map((cab) => (
+            <Pressable key={cab.vehicle_id} onPress={() => act('assign', { vehicleId: cab.vehicle_id })} style={[styles.vehicleChoice, cab.category === booking.car_category && styles.vehicleChoiceActive]}>
+              <Text style={styles.vehicleChoiceText}>{cab.cab_ref} · {cab.driver_name}</Text>
+              <Text style={styles.vehicleChoiceSub}>{CATEGORY_LABELS[cab.category] || cab.category} · {cab.is_online ? 'Online' : 'Offline'}</Text>
+            </Pressable>
+          )) : <Text style={styles.itemMeta}>No active cabs.</Text>}
+        </ScrollView>
+      ) : null}
+    </View>
+  );
+}
+
+function AdminBookings({ bookings, cabs, overview, onAction }) {
+  return (
+    <>
+      <AdminOverview overview={overview} />
+      {BOOKING_GROUPS.map((group) => {
+        const items = bookings.filter((booking) => group.statuses.includes(booking.status));
+        if (!items.length && group.statuses[0] !== 'PENDING_APPROVAL') return null;
+        return (
+          <View key={group.title}>
+            <Text style={styles.groupTitle}>{group.title} · {items.length}</Text>
+            {!items.length ? <Text style={styles.itemMeta}>Nothing waiting. New bookings appear here with an alert.</Text> : null}
+            {items.map((booking) => <AdminBookingCard key={booking.id} booking={booking} cabs={cabs} onAction={onAction} />)}
+          </View>
+        );
+      })}
+      <Text style={styles.groupTitle}>Recently finished</Text>
+      {bookings.filter((booking) => ['COMPLETED', 'CANCELLED', 'REJECTED'].includes(booking.status)).slice(0, 10).map((booking) => (
+        <View key={booking.id} style={styles.listItem}>
+          <Text style={styles.itemTitle}>{booking.booking_ref} · {ADMIN_STATUS[booking.status]}</Text>
+          <Text style={styles.itemMeta}>{booking.pickup_text} → {booking.drop_text} · {formatPickupTime(booking.trip_datetime)}{booking.status_reason ? ` · ${booking.status_reason}` : ''}</Text>
+        </View>
+      ))}
+    </>
   );
 }
 
@@ -619,5 +730,11 @@ const styles = StyleSheet.create({
   onlineToggleSub: { color: palette.muted, fontSize: 11, marginTop: 4 },
   onlineToggleSubOn: { color: '#0E0D0B' },
   dispatchStatus: { color: palette.primary, fontSize: 11, fontWeight: '700', marginTop: 6 },
-  message: { color: palette.primary, fontSize: 11, lineHeight: 16, marginTop: 8 }
+  message: { color: palette.primary, fontSize: 11, lineHeight: 16, marginTop: 8 },
+  callLink: { color: palette.primary, fontSize: 12, fontWeight: '800', marginTop: 6 },
+  vehicleChoiceSub: { color: palette.muted, fontSize: 9, marginTop: 2 },
+  overviewRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 4, marginBottom: 6 },
+  overviewTile: { minWidth: 92, flexGrow: 1, borderRadius: 12, borderWidth: 1, borderColor: palette.border, backgroundColor: palette.elevated, paddingVertical: 10, paddingHorizontal: 10 },
+  overviewValue: { color: palette.primary, fontSize: 20, fontWeight: '900' },
+  overviewLabel: { color: palette.muted, fontSize: 10, fontWeight: '700', marginTop: 2 }
 });

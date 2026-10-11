@@ -8,6 +8,7 @@ import {
   OtpUnavailableError, STAFF_PERMISSIONS, authenticate, checkOtp, createSession, endSession, findOrCreateUser,
   grantRole, isValidIndianPhone, loadAccount, loginWithPhone, normalizePhone, requestOtp, requireLogin, requireStaff
 } from './auth.js';
+import { CHANNELS, notifyStaff, notifyUsers } from './notify.js';
 
 const app = express();
 // Express 4 does not catch rejected promises from async handlers.
@@ -20,7 +21,6 @@ app.use(express.json());
 app.use(authenticate);
 
 const validCategories = new Set(['sedan', 'suv', 'traveller']);
-const validStatuses = new Set(['PENDING', 'CONFIRMED', 'ONGOING', 'COMPLETED', 'CANCELLED']);
 const validServiceTypes = new Set(['OUTSTATION', 'AIRPORT', 'WEDDING', 'LOCAL']);
 // Single source of truth for pricing. The app downloads this via /app/config
 // and falls back to an identical copy when the backend is unreachable.
@@ -312,6 +312,10 @@ app.post('/partners/applications', requireLogin, rateLimit('partner-apply', 5, 6
       req.account.id, partnerType], client);
   });
 
+  notifyStaff('partners', {
+    title: `New cab partner · ${application.application_ref}`,
+    body: `${fullName} (+91 ${phone}) · ${partnerType === 'vehicle_owner' ? 'Vehicle owner' : 'Driver'} · ${plate} ${String(vehicleModel).trim()}`
+  });
   res.status(201).json({
     application: {
       id: application.id,
@@ -355,6 +359,126 @@ app.post('/pricing/estimate', (req, res) => {
   });
 });
 
+// ---- Booking flow ---------------------------------------------------------
+// Customer requests -> admin approves -> eligible online drivers see it -> first to accept gets it.
+const STATUS_LABELS = {
+  PENDING_APPROVAL: 'waiting for approval',
+  ON_HOLD: 'on hold',
+  REJECTED: 'rejected',
+  APPROVED: 'searching for a driver',
+  DRIVER_NOT_FOUND: 'without a driver',
+  CONFIRMED: 'confirmed with a driver',
+  ONGOING: 'on its trip',
+  COMPLETED: 'completed',
+  CANCELLED: 'cancelled'
+};
+const OPEN_FOR_ADMIN = ['PENDING_APPROVAL', 'ON_HOLD', 'APPROVED', 'DRIVER_NOT_FOUND'];
+const CANCELLABLE = [...OPEN_FOR_ADMIN, 'CONFIRMED'];
+const DRIVER_SEARCH_MINUTES = Number(process.env.DRIVER_SEARCH_MINUTES || 15);
+const DISPATCH_RADIUS_KM = Number(process.env.DISPATCH_RADIUS_KM || 80);
+// A cab cannot take two trips that start within this many hours of each other.
+const TRIP_GAP_SECONDS = Number(process.env.TRIP_GAP_HOURS || 4) * 3600;
+const CATEGORY_NAMES = { sedan: 'Sedan', suv: 'SUV', traveller: 'Tempo Traveller' };
+
+class BookingError extends Error {
+  constructor(status, message, code = null) {
+    super(message);
+    this.status = status;
+    this.code = code;
+  }
+}
+
+function tripTime(value) {
+  return new Date(value).toLocaleString('en-IN', {
+    timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', hour: 'numeric', minute: '2-digit'
+  });
+}
+const tripLine = (booking) => `${booking.pickup_text} → ${booking.drop_text}, ${tripTime(booking.trip_datetime)}`;
+
+function recordStatus(client, bookingId, oldStatus, newStatus, actorId, note) {
+  return query(`
+    INSERT INTO booking_status_events (booking_id, old_status, new_status, changed_by_user_id, note)
+    VALUES ($1, $2, $3, $4, $5)
+  `, [bookingId, oldStatus, newStatus, actorId, note], client);
+}
+
+// Locks the booking, checks it is in an allowed status, runs guard, then moves it and records the change.
+// fields may be a function of the locked booking, evaluated after guard.
+function transitionBooking(id, fromStatuses, toStatus, { actorId = null, note = null, fields = {}, guard } = {}) {
+  return transaction(async (client) => {
+    const current = await one('SELECT * FROM bookings WHERE id = $1 FOR UPDATE', [id], client);
+    if (!current) throw new BookingError(404, 'Booking not found');
+    if (!fromStatuses.includes(current.status)) {
+      throw new BookingError(409, `This booking is ${STATUS_LABELS[current.status] || current.status} and can't be changed this way.`, 'WRONG_STATUS');
+    }
+    if (guard) await guard(client, current);
+    const values = typeof fields === 'function' ? fields(current) : fields;
+    const keys = Object.keys(values);
+    const booking = await one(`
+      UPDATE bookings SET status = $2, updated_at = now()${keys.map((key, i) => `, ${key} = $${i + 3}`).join('')}
+      WHERE id = $1 RETURNING *
+    `, [id, toStatus, ...keys.map((key) => values[key])], client);
+    await recordStatus(client, id, current.status, toStatus, actorId, note);
+    return { before: current, booking };
+  });
+}
+
+// Returns the ref of another trip this cab already has close to this booking's time, if any.
+async function cabConflict(client, vehicleId, booking) {
+  const clash = await one(`
+    SELECT booking_ref FROM bookings
+    WHERE vehicle_id = $1 AND id <> $2 AND status IN ('CONFIRMED','ONGOING')
+      AND abs(extract(epoch FROM (trip_datetime - $3::timestamptz))) < $4
+    LIMIT 1
+  `, [vehicleId, booking.id, booking.trip_datetime, TRIP_GAP_SECONDS], client);
+  return clash?.booking_ref || null;
+}
+
+function distanceKmBetween(lat1, lng1, lat2, lng2) {
+  const toRad = (deg) => (deg * Math.PI) / 180;
+  const a = Math.sin(toRad(lat2 - lat1) / 2) ** 2 +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(toRad(lng2 - lng1) / 2) ** 2;
+  return 6371 * 2 * Math.asin(Math.sqrt(a));
+}
+
+// Drivers with an unknown location (or bookings without a pin) are not filtered out.
+function inServiceArea(booking, cab) {
+  if (booking.pickup_latitude == null || booking.pickup_longitude == null || cab.latitude == null || cab.longitude == null) return true;
+  return distanceKmBetween(booking.pickup_latitude, booking.pickup_longitude, cab.latitude, cab.longitude) <= DISPATCH_RADIUS_KM;
+}
+
+// Online, active cabs of the right type that are free at that time, near the pickup, and haven't declined it.
+async function eligibleCabs(booking, client) {
+  const cabs = await query(`
+    SELECT v.id AS vehicle_id, d.id AS driver_id, d.user_id, d.latitude, d.longitude
+    FROM vehicles v
+    JOIN partners p ON p.id = v.partner_id AND p.active
+    JOIN drivers d ON d.id = v.driver_id AND d.is_active AND d.is_online
+    WHERE v.active AND v.category = $1
+      AND NOT EXISTS (SELECT 1 FROM driver_status_events e WHERE e.booking_id = $2 AND e.driver_id = d.id AND e.status = 'BOOKING_REJECTED')
+      AND NOT EXISTS (
+        SELECT 1 FROM bookings o WHERE o.vehicle_id = v.id AND o.id <> $2 AND o.status IN ('CONFIRMED','ONGOING')
+          AND abs(extract(epoch FROM (o.trip_datetime - $3::timestamptz))) < $4
+      )
+  `, [booking.car_category, booking.id, booking.trip_datetime, TRIP_GAP_SECONDS], client);
+  return cabs.filter((cab) => inServiceArea(booking, cab));
+}
+
+async function notifyDriverAssigned(booking) {
+  const details = await one(`
+    SELECT d.driver_name, d.phone, v.model, v.plate_no FROM drivers d JOIN vehicles v ON v.id = $2 WHERE d.id = $1
+  `, [booking.driver_id, booking.vehicle_id]);
+  notifyUsers([booking.customer_id], {
+    title: `Driver assigned · ${booking.booking_ref}`,
+    body: `${details.driver_name} (+91 ${details.phone}) · ${details.model} ${details.plate_no}. Pickup ${tripTime(booking.trip_datetime)}.`,
+    data: { bookingId: booking.id }
+  });
+}
+
+async function driverUserId(driverId) {
+  return (await one('SELECT user_id FROM drivers WHERE id = $1', [driverId]))?.user_id;
+}
+
 app.post('/bookings', requireLogin, handle(async (req, res) => {
   const {
     serviceType,
@@ -394,8 +518,7 @@ app.post('/bookings', requireLogin, handle(async (req, res) => {
     return res.status(400).json({ error: 'routeDistanceKm must be a non-negative number' });
   }
 
-  const user = req.account;
-
+  const customer = req.account;
   const fareBreakdown = calculateFareBreakdown(
     carCategory,
     routeDistanceKm == null ? null : Number(routeDistanceKm),
@@ -405,41 +528,31 @@ app.post('/bookings', requireLogin, handle(async (req, res) => {
 
   const trackingToken = randomBytes(32).toString('base64url');
   const trackingTokenHash = createHash('sha256').update(trackingToken).digest('hex');
-  const bookingId = await transaction(async (client) => {
-    const { id } = await one(`
+  const booking = await transaction(async (client) => {
+    const created = await one(`
       INSERT INTO bookings (
         booking_ref, customer_id, service_type, pickup_text, drop_text,
         pickup_latitude, pickup_longitude, drop_latitude, drop_longitude, route_distance_km, tracking_token_hash,
         trip_datetime, car_category, estimated_fare, fare_breakdown, customer_note, status
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, 'PENDING')
-      RETURNING id
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, 'PENDING_APPROVAL')
+      RETURNING *
     `, [
-      `SY-${nano()}`,
-      user.id,
-      serviceType,
-      pickup,
-      drop,
-      pickupLatitude ?? null,
-      pickupLongitude ?? null,
-      dropLatitude ?? null,
-      dropLongitude ?? null,
-      routeDistanceKm ?? null,
-      trackingTokenHash,
-      tripDatetime,
-      carCategory,
-      fareBreakdown?.total ?? null,
-      fareBreakdown ? JSON.stringify(fareBreakdown) : null,
-      customerNote || null
+      `SY-${nano()}`, customer.id, serviceType, pickup, drop,
+      pickupLatitude ?? null, pickupLongitude ?? null, dropLatitude ?? null, dropLongitude ?? null,
+      routeDistanceKm ?? null, trackingTokenHash, tripDatetime, carCategory,
+      fareBreakdown?.total ?? null, fareBreakdown ? JSON.stringify(fareBreakdown) : null, customerNote || null
     ], client);
-    await query(`
-      INSERT INTO booking_status_events (booking_id, old_status, new_status, changed_by_user_id, note)
-      VALUES ($1, NULL, 'PENDING', $2, 'Booking created')
-    `, [id, user.id], client);
-    return id;
+    await recordStatus(client, created.id, null, 'PENDING_APPROVAL', customer.id, 'Booking requested');
+    return created;
   });
 
-  await autoDispatch(bookingId);
-  res.status(201).json({ booking: publicBooking(await getBooking(bookingId)), trackingToken });
+  notifyStaff('bookings', {
+    title: `New booking · ${booking.booking_ref}`,
+    body: `${customer.fullName || 'Customer'} (+91 ${customer.phone}) · ${tripLine(booking)} · ${CATEGORY_NAMES[carCategory]}`
+      + `${booking.estimated_fare ? ` · ₹${booking.estimated_fare}` : ''}`,
+    data: { bookingId: booking.id }
+  });
+  res.status(201).json({ booking: publicBooking(booking), trackingToken });
 }));
 
 // Customers see only their own bookings; staff with booking access see any.
@@ -463,58 +576,146 @@ app.get('/bookings', requireLogin, handle(async (req, res) => {
 
 app.post('/bookings/:id/cancel', requireLogin, handle(async (req, res) => {
   const id = Number(req.params.id);
-  const { note } = req.body;
-
-  const booking = await getBooking(id);
-  if (!booking || booking.customer_id !== req.account.id) return res.status(404).json({ error: 'Booking not found' });
-  if (booking.status === 'COMPLETED' || booking.status === 'CANCELLED') {
-    return res.status(400).json({ error: 'Booking can no longer be cancelled' });
-  }
-
-  await transaction(async (client) => {
-    await query("UPDATE bookings SET status = 'CANCELLED', updated_at = now() WHERE id = $1", [id], client);
-    await query(`
-      INSERT INTO booking_status_events (booking_id, old_status, new_status, changed_by_user_id, note)
-      VALUES ($1, $2, 'CANCELLED', $3, $4)
-    `, [id, booking.status, booking.customer_id, note || 'Cancelled by customer'], client);
+  const owned = await getBooking(id);
+  if (!owned || owned.customer_id !== req.account.id) return res.status(404).json({ error: 'Booking not found' });
+  const { booking } = await transitionBooking(id, CANCELLABLE, 'CANCELLED', {
+    actorId: req.account.id,
+    note: String(req.body.note || 'Cancelled by customer').slice(0, 300)
   });
-
-  res.json({ booking: publicBooking(await getBooking(id)) });
+  if (booking.driver_id) {
+    notifyUsers([await driverUserId(booking.driver_id)], {
+      title: `Booking cancelled · ${booking.booking_ref}`, body: `The customer cancelled: ${tripLine(booking)}`, channel: CHANNELS.offers
+    });
+  }
+  notifyStaff('bookings', { title: `Customer cancelled · ${booking.booking_ref}`, body: tripLine(booking), data: { bookingId: id } });
+  res.json({ booking: publicBooking(booking) });
 }));
 
+// ---- Admin: review bookings ----------------------------------------------
 app.get('/admin/bookings', requireStaff('bookings'), handle(async (req, res) => {
   const status = req.query.status;
-  if (status && !validStatuses.has(String(status))) {
+  if (status && !STATUS_LABELS[String(status)]) {
     return res.status(400).json({ error: 'Invalid status filter' });
   }
-
-  const rows = status
-    ? await query('SELECT * FROM bookings WHERE status = $1 ORDER BY created_at DESC', [String(status)])
-    : await query('SELECT * FROM bookings ORDER BY created_at DESC');
-
+  const rows = await query(`
+    SELECT b.*, u.full_name AS customer_name, u.phone AS customer_phone,
+      d.driver_name, d.phone AS driver_phone, v.cab_ref, v.plate_no, v.model AS vehicle_model,
+      (SELECT count(*) FROM driver_status_events e WHERE e.booking_id = b.id AND e.status = 'BOOKING_REJECTED')::int AS declined_count
+    FROM bookings b
+    JOIN users u ON u.id = b.customer_id
+    LEFT JOIN drivers d ON d.id = b.driver_id
+    LEFT JOIN vehicles v ON v.id = b.vehicle_id
+    WHERE ($1::text IS NULL OR b.status = $1)
+    ORDER BY b.created_at DESC
+    LIMIT 200
+  `, [status ? String(status) : null]);
   res.json({ bookings: rows.map(publicBooking) });
 }));
 
-app.patch('/admin/bookings/:id/status', requireStaff('bookings'), handle(async (req, res) => {
-  const id = Number(req.params.id);
-  const { status, changedByUserId, note } = req.body;
+// How many bookings are in each status, for the dashboard overview.
+app.get('/admin/overview', requireStaff('bookings'), handle(async (_req, res) => {
+  const counts = Object.fromEntries((await query('SELECT status, count(*)::int AS n FROM bookings GROUP BY status')).map((row) => [row.status, row.n]));
+  const online = await one(`
+    SELECT count(*)::int AS n FROM drivers d JOIN partners p ON p.id = d.partner_id AND p.active WHERE d.is_online AND d.is_active
+  `);
+  res.json({ counts, total: Object.values(counts).reduce((sum, n) => sum + n, 0), onlineDrivers: online.n });
+}));
 
-  if (!status || !validStatuses.has(status)) {
-    return res.status(400).json({ error: 'Valid status is required' });
-  }
-
-  const booking = await getBooking(id);
-  if (!booking) return res.status(404).json({ error: 'Booking not found' });
-
-  await transaction(async (client) => {
-    await query('UPDATE bookings SET status = $1, updated_at = now() WHERE id = $2', [status, id], client);
-    await query(`
-      INSERT INTO booking_status_events (booking_id, old_status, new_status, changed_by_user_id, note)
-      VALUES ($1, $2, $3, $4, $5)
-    `, [id, booking.status, status, changedByUserId || null, note || null], client);
+app.post('/admin/bookings/:id/approve', requireStaff('bookings'), handle(async (req, res) => {
+  const { booking } = await transitionBooking(Number(req.params.id), ['PENDING_APPROVAL', 'ON_HOLD', 'DRIVER_NOT_FOUND'], 'APPROVED', {
+    actorId: req.account?.id ?? null,
+    note: 'Approved by SadakYatra',
+    fields: { approved_by_user_id: req.account?.id ?? null, approved_at: new Date(), status_reason: null }
   });
+  const cabs = await eligibleCabs(booking);
+  notifyUsers(cabs.map((cab) => cab.user_id), {
+    title: 'New booking available',
+    body: `${tripLine(booking)} · ${CATEGORY_NAMES[booking.car_category]}. First to accept gets it.`,
+    channel: CHANNELS.offers,
+    data: { bookingId: booking.id }
+  });
+  notifyUsers([booking.customer_id], {
+    title: `Booking approved · ${booking.booking_ref}`, body: 'We are finding a driver for you.', data: { bookingId: booking.id }
+  });
+  res.json({ booking: publicBooking(booking), driversNotified: cabs.length });
+}));
 
-  res.json({ booking: publicBooking(await getBooking(id)) });
+app.post('/admin/bookings/:id/hold', requireStaff('bookings'), handle(async (req, res) => {
+  const reason = String(req.body.reason || '').trim().slice(0, 300) || null;
+  const { booking } = await transitionBooking(Number(req.params.id), ['PENDING_APPROVAL', 'APPROVED', 'DRIVER_NOT_FOUND'], 'ON_HOLD', {
+    actorId: req.account?.id ?? null, note: reason || 'Put on hold', fields: { status_reason: reason }
+  });
+  res.json({ booking: publicBooking(booking) });
+}));
+
+app.post('/admin/bookings/:id/reject', requireStaff('bookings'), handle(async (req, res) => {
+  const reason = String(req.body.reason || '').trim().slice(0, 300) || null;
+  const { booking } = await transitionBooking(Number(req.params.id), OPEN_FOR_ADMIN, 'REJECTED', {
+    actorId: req.account?.id ?? null, note: reason || 'Rejected', fields: { status_reason: reason }
+  });
+  notifyUsers([booking.customer_id], {
+    title: `Booking not accepted · ${booking.booking_ref}`,
+    body: reason || 'Sorry, we cannot serve this trip. Please call us for help.',
+    data: { bookingId: booking.id }
+  });
+  res.json({ booking: publicBooking(booking) });
+}));
+
+app.post('/admin/bookings/:id/cancel', requireStaff('bookings'), handle(async (req, res) => {
+  const reason = String(req.body.reason || '').trim().slice(0, 300) || 'Cancelled by SadakYatra';
+  const { booking } = await transitionBooking(Number(req.params.id), CANCELLABLE, 'CANCELLED', {
+    actorId: req.account?.id ?? null, note: reason, fields: { status_reason: reason }
+  });
+  notifyUsers([booking.customer_id], { title: `Booking cancelled · ${booking.booking_ref}`, body: reason, data: { bookingId: booking.id } });
+  if (booking.driver_id) {
+    notifyUsers([await driverUserId(booking.driver_id)], {
+      title: `Booking cancelled · ${booking.booking_ref}`, body: tripLine(booking), channel: CHANNELS.offers
+    });
+  }
+  res.json({ booking: publicBooking(booking) });
+}));
+
+// Cabs an admin can assign, for staff who manage bookings but not partners.
+app.get('/admin/cabs', requireStaff('bookings'), handle(async (_req, res) => {
+  const cabs = await query(`
+    SELECT v.id AS vehicle_id, v.cab_ref, v.plate_no, v.category, v.model, d.driver_name, d.phone AS driver_phone, d.is_online
+    FROM vehicles v
+    JOIN partners p ON p.id = v.partner_id AND p.active
+    JOIN drivers d ON d.id = v.driver_id AND d.is_active
+    WHERE v.active
+    ORDER BY d.is_online DESC, v.cab_ref
+  `);
+  res.json({ cabs });
+}));
+
+// Admin puts the booking straight on a chosen cab (any active cab, free at that time).
+app.post('/admin/bookings/:id/assign', requireStaff('bookings'), handle(async (req, res) => {
+  const vehicleId = Number(req.body.vehicleId);
+  if (!Number.isInteger(vehicleId) || vehicleId < 1) return res.status(400).json({ error: 'Choose a cab first' });
+  let cab;
+  const { booking } = await transitionBooking(Number(req.params.id), OPEN_FOR_ADMIN, 'CONFIRMED', {
+    actorId: req.account?.id ?? null,
+    note: 'Driver assigned by SadakYatra',
+    guard: async (client, current) => {
+      cab = await one(`
+        SELECT v.id, v.driver_id FROM vehicles v
+        JOIN partners p ON p.id = v.partner_id AND p.active
+        JOIN drivers d ON d.id = v.driver_id AND d.is_active
+        WHERE v.id = $1 AND v.active
+        FOR UPDATE OF v
+      `, [vehicleId], client);
+      if (!cab) throw new BookingError(409, 'This cab is paused or has no active driver');
+      const clash = await cabConflict(client, vehicleId, current);
+      if (clash) throw new BookingError(409, `This cab already has ${clash} around that time`);
+    },
+    fields: () => ({ vehicle_id: vehicleId, driver_id: cab.driver_id, driver_status: 'BOOKING_ACCEPTED', status_reason: null })
+  });
+  await query("INSERT INTO driver_status_events (booking_id, driver_id, status) VALUES ($1, $2, 'ASSIGNED')", [booking.id, booking.driver_id]);
+  notifyUsers([await driverUserId(booking.driver_id)], {
+    title: `Booking assigned to you · ${booking.booking_ref}`, body: tripLine(booking), channel: CHANNELS.offers, data: { bookingId: booking.id }
+  });
+  notifyDriverAssigned(booking);
+  res.json({ booking: publicBooking(booking) });
 }));
 
 app.get('/admin/partners/applications', requireStaff('partners'), handle(async (req, res) => {
@@ -618,7 +819,7 @@ app.get('/admin/partners', requireStaff('partners'), handle(async (_req, res) =>
     LEFT JOIN bookings current ON current.id = (
       SELECT b.id FROM bookings b
       WHERE b.vehicle_id = v.id
-        AND (b.status IN ('CONFIRMED','ONGOING') OR (b.status = 'PENDING' AND b.driver_status = 'OFFERED'))
+        AND b.status IN ('CONFIRMED','ONGOING')
       ORDER BY b.updated_at DESC LIMIT 1
     )
     ORDER BY p.created_at DESC
@@ -693,176 +894,58 @@ app.post('/integrations/gps/location', handle(async (req, res) => {
   res.json({ ok: true });
 }));
 
-// ---- Dispatch -------------------------------------------------------------
-// A cab is available when its partner, vehicle and driver are active, the
-// driver is online, and it holds no open offer or unfinished trip.
-const OFFER_TIMEOUT_SECONDS = Number(process.env.OFFER_TIMEOUT_SECONDS || 60);
-const cabIsFreeSql = `
-  NOT EXISTS (
-    SELECT 1 FROM bookings assigned
-    WHERE assigned.vehicle_id = v.id
-      AND (assigned.status IN ('CONFIRMED','ONGOING')
-        OR (assigned.status = 'PENDING' AND assigned.driver_status = 'OFFERED'))
-  )
-`;
-const availableCabsSql = `
-  SELECT v.id AS vehicle_id, d.id AS driver_id, d.latitude, d.longitude
-  FROM vehicles v
-  JOIN partners p ON p.id = v.partner_id AND p.active
-  JOIN drivers d ON d.id = v.driver_id AND d.is_active AND d.is_online
-  WHERE v.active AND v.category = $1 AND ${cabIsFreeSql}
-`;
-
-function distanceKmBetween(lat1, lng1, lat2, lng2) {
-  const toRad = (deg) => (deg * Math.PI) / 180;
-  const a = Math.sin(toRad(lat2 - lat1) / 2) ** 2 +
-    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(toRad(lng2 - lng1) / 2) ** 2;
-  return 6371 * 2 * Math.asin(Math.sqrt(a));
-}
-
-// Alert the driver's phone (even when locked) through Expo's push service.
-// Best effort: dispatch never waits on or fails because of a push.
-async function sendOfferPush(bookingId, driverId) {
-  try {
-    const offer = await one(`
-      SELECT d.push_token, b.pickup_text, b.drop_text, b.car_category
-      FROM drivers d JOIN bookings b ON b.id = $1
-      WHERE d.id = $2 AND d.push_token IS NOT NULL
-    `, [bookingId, driverId]);
-    if (!offer) return;
-    const response = await fetch('https://exp.host/--/api/v2/push/send', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', accept: 'application/json' },
-      body: JSON.stringify({
-        to: offer.push_token,
-        title: 'New booking offer',
-        body: `${offer.pickup_text} → ${offer.drop_text} (${offer.car_category}). Respond within ${OFFER_TIMEOUT_SECONDS}s.`,
-        sound: 'default',
-        priority: 'high',
-        channelId: 'booking-offers',
-        ttl: OFFER_TIMEOUT_SECONDS,
-        data: { bookingId }
-      })
-    });
-    const result = (await response.json())?.data;
-    if (result?.details?.error === 'DeviceNotRegistered') {
-      await query('UPDATE drivers SET push_token = NULL WHERE id = $1 AND push_token = $2', [driverId, offer.push_token]);
-    } else if (result?.status === 'error') {
-      console.error('Offer push rejected', result.message);
-    }
-  } catch (error) {
-    console.error('Offer push failed', error.message);
-  }
-}
-
-// Locking the vehicle row stops two concurrent offers from grabbing the same cab.
-async function offerBooking(bookingId, cab) {
-  const offered = await transaction(async (client) => {
-    await query("SELECT id FROM vehicles WHERE id = $1 FOR UPDATE", [cab.vehicle_id], client);
-    const free = await one(`SELECT v.id FROM vehicles v WHERE v.id = $1 AND ${cabIsFreeSql}`, [cab.vehicle_id], client);
-    if (!free) return false;
-    const offered = await one(`
-      UPDATE bookings
-      SET vehicle_id = $1, driver_id = $2, driver_status = 'OFFERED', updated_at = now()
-      WHERE id = $3 AND status = 'PENDING' AND driver_id IS NULL
-      RETURNING id
-    `, [cab.vehicle_id, cab.driver_id, bookingId], client);
-    if (!offered) return false;
-    await query("INSERT INTO driver_status_events (booking_id, driver_id, status) VALUES ($1, $2, 'OFFERED')",
-      [bookingId, cab.driver_id], client);
-    return true;
-  });
-  if (offered) sendOfferPush(bookingId, cab.driver_id);
-  return offered;
-}
-
-function releaseOffer(bookingId, driverId) {
-  return transaction(async (client) => {
-    const released = await one(`
-      UPDATE bookings SET driver_id = NULL, vehicle_id = NULL, driver_status = 'BOOKING_REJECTED', updated_at = now()
-      WHERE id = $1 AND driver_id = $2 AND status = 'PENDING' AND driver_status = 'OFFERED'
-      RETURNING id
-    `, [bookingId, driverId], client);
-    if (!released) return false;
-    await query("INSERT INTO driver_status_events (booking_id, driver_id, status) VALUES ($1, $2, 'BOOKING_REJECTED')",
-      [bookingId, driverId], client);
-    return true;
-  });
-}
-
-// Offer a pending booking to the nearest available cab that hasn't already
-// declined it. Cabs without a known location are tried after located ones.
-async function autoDispatch(bookingId) {
-  const booking = await getBooking(bookingId);
-  if (!booking || booking.status !== 'PENDING' || booking.driver_id) return false;
-  const declined = new Set((await query(`
-    SELECT driver_id FROM driver_status_events WHERE booking_id = $1 AND status = 'BOOKING_REJECTED'
-  `, [bookingId])).map((row) => row.driver_id));
-  const hasPickup = booking.pickup_latitude != null && booking.pickup_longitude != null;
-  const candidates = (await query(availableCabsSql, [booking.car_category]))
-    .filter((cab) => !declined.has(cab.driver_id))
-    .map((cab) => ({
-      ...cab,
-      distance: hasPickup && cab.latitude != null
-        ? distanceKmBetween(booking.pickup_latitude, booking.pickup_longitude, cab.latitude, cab.longitude)
-        : Infinity
-    }))
-    .sort((a, b) => a.distance - b.distance);
-  for (const cab of candidates) {
-    if (await offerBooking(bookingId, cab)) return true;
-  }
-  return false;
-}
-
-// Expire unanswered offers, then try to place every waiting booking.
+// ---- Driver not found ----------------------------------------------------
+// Approved bookings nobody accepted in time go back to the admin.
 let sweepRunning = false;
-async function runDispatchSweep() {
+async function runDriverSearchSweep() {
   if (sweepRunning) return;
   sweepRunning = true;
   try {
     const expired = await query(`
-      SELECT id, driver_id FROM bookings
-      WHERE status = 'PENDING' AND driver_status = 'OFFERED'
-        AND updated_at <= now() - make_interval(secs => $1)
-    `, [OFFER_TIMEOUT_SECONDS]);
-    for (const offer of expired) await releaseOffer(offer.id, offer.driver_id);
-    const waiting = await query(`
-      SELECT id FROM bookings WHERE status = 'PENDING' AND driver_id IS NULL
-      ORDER BY trip_datetime ASC
-    `);
-    for (const booking of waiting) await autoDispatch(booking.id);
+      SELECT id FROM bookings
+      WHERE status = 'APPROVED' AND approved_at <= now() - make_interval(secs => $1)
+    `, [DRIVER_SEARCH_MINUTES * 60]);
+    for (const { id } of expired) {
+      try {
+        const { booking } = await transitionBooking(id, ['APPROVED'], 'DRIVER_NOT_FOUND', {
+          note: `No driver accepted within ${DRIVER_SEARCH_MINUTES} minutes`
+        });
+        notifyStaff('bookings', {
+          title: `No driver found · ${booking.booking_ref}`,
+          body: `${tripLine(booking)}. Assign a cab or approve again.`,
+          data: { bookingId: id }
+        });
+      } catch (error) {
+        if (!(error instanceof BookingError)) throw error; // accepted meanwhile
+      }
+    }
   } catch (error) {
-    console.error('Dispatch sweep failed', error);
+    console.error('Driver search sweep failed', error);
   } finally {
     sweepRunning = false;
   }
 }
-setInterval(runDispatchSweep, 10_000).unref();
+setInterval(runDriverSearchSweep, 30_000).unref();
 
-app.post('/admin/bookings/:id/assign', requireStaff('bookings'), handle(async (req, res) => {
-  const bookingId = Number(req.params.id);
-  const vehicleId = Number(req.body.vehicleId);
-  if (!Number.isInteger(vehicleId) || vehicleId < 1) {
-    return res.status(400).json({ error: 'Choose a cab first' });
+// ---- Push tokens (every logged-in user) ----------------------------------
+app.post('/me/push-token', requireLogin, handle(async (req, res) => {
+  const { token, previousToken } = req.body;
+  const valid = (value) => typeof value === 'string' && /^Expo(nent)?PushToken\[[^\]]{10,200}\]$/.test(value);
+  if (token !== null && !valid(token)) return res.status(400).json({ error: 'A valid Expo push token is required' });
+  if (token === null) {
+    // Logging out: stop this phone receiving this account's notifications.
+    if (valid(previousToken)) await query('DELETE FROM user_push_tokens WHERE token = $1 AND user_id = $2', [previousToken, req.account.id]);
+    return res.json({ registered: false });
   }
-  const booking = await getBooking(bookingId);
-  if (!booking) return res.status(404).json({ error: 'Booking not found' });
-  if (booking.status !== 'PENDING') {
-    return res.status(409).json({ error: 'Only pending bookings can be assigned' });
-  }
-  const cab = await one(`${availableCabsSql} AND v.id = $2`, [booking.car_category, vehicleId]);
-  if (!cab) {
-    return res.status(409).json({ error: 'This cab is offline, busy with another booking, or a different vehicle type' });
-  }
-  // Admin choice overrides an automatic offer that is still waiting.
-  if (booking.driver_id) {
-    if (booking.driver_status !== 'OFFERED') return res.status(409).json({ error: 'A driver has already accepted this booking' });
-    await releaseOffer(bookingId, booking.driver_id);
-  }
-  if (!(await offerBooking(bookingId, cab))) return res.status(409).json({ error: 'Booking could not be offered; refresh and try again' });
-  res.json({ booking: publicBooking(await getBooking(bookingId)) });
+  // A phone belongs to one account at a time.
+  await query(`
+    INSERT INTO user_push_tokens (token, user_id) VALUES ($1, $2)
+    ON CONFLICT (token) DO UPDATE SET user_id = EXCLUDED.user_id, updated_at = now()
+  `, [token, req.account.id]);
+  res.json({ registered: true });
 }));
 
+// ---- Driver --------------------------------------------------------------
 app.patch('/driver/presence', requireDriver, handle(async (req, res) => {
   const { online } = req.body;
   if (typeof online !== 'boolean') {
@@ -876,26 +959,7 @@ app.patch('/driver/presence', requireDriver, handle(async (req, res) => {
         location_updated_at = CASE WHEN $1 THEN location_updated_at END
     WHERE id = $2
   `, [online, req.driver.id]);
-  if (!online) {
-    const offers = await query(`SELECT id FROM bookings WHERE driver_id = $1 AND status = 'PENDING' AND driver_status = 'OFFERED'`, [req.driver.id]);
-    for (const offer of offers) await releaseOffer(offer.id, req.driver.id);
-  }
-  await runDispatchSweep();
   res.json({ online });
-}));
-
-// The driver app registers its Expo push token so offers can ring a locked phone.
-app.post('/driver/push-token', requireDriver, handle(async (req, res) => {
-  const { token } = req.body;
-  if (token !== null && (typeof token !== 'string' || !/^Expo(nent)?PushToken\[[^\]]{10,200}\]$/.test(token))) {
-    return res.status(400).json({ error: 'A valid Expo push token is required' });
-  }
-  // A phone belongs to one driver at a time: drop the token from anyone else who had it.
-  await transaction(async (client) => {
-    if (token) await query('UPDATE drivers SET push_token = NULL WHERE push_token = $1 AND id <> $2', [token, req.driver.id], client);
-    await query('UPDATE drivers SET push_token = $1 WHERE id = $2', [token, req.driver.id], client);
-  });
-  res.json({ registered: Boolean(token) });
 }));
 
 app.post('/driver/location', requireDriver, handle(async (req, res) => {
@@ -910,20 +974,43 @@ app.post('/driver/location', requireDriver, handle(async (req, res) => {
   res.json({ latitude, longitude, updatedAt: new Date().toISOString() });
 }));
 
+const driverCab = (driverId) => one('SELECT * FROM vehicles WHERE driver_id = $1', [driverId]);
+
 app.get('/driver/me', requireDriver, handle(async (req, res) => {
   const cab = await one('SELECT cab_ref, plate_no, category, model FROM vehicles WHERE driver_id = $1', [req.driver.id]);
   res.json({ driver: { name: req.driver.driver_name, phone: req.driver.phone, online: Boolean(req.driver.is_online), cab } });
 }));
 
+// Drivers see the trip, not who booked it, until they accept.
+const offerView = ({ customer_id: _c, tracking_token_hash: _t, customer_note: _n, admin_note: _a, status_reason: _r, ...offer }) => offer;
+
+// The driver's own trips, plus approved bookings they can still accept.
 app.get('/driver/bookings', requireDriver, handle(async (req, res) => {
   const bookings = await query(`
-    SELECT b.*, v.plate_no, v.model AS vehicle_model
+    SELECT b.*, v.plate_no, v.model AS vehicle_model, u.full_name AS customer_name, u.phone AS customer_phone
     FROM bookings b
     LEFT JOIN vehicles v ON v.id = b.vehicle_id
-    WHERE b.driver_id = $1 AND b.status IN ('PENDING','CONFIRMED','ONGOING')
+    JOIN users u ON u.id = b.customer_id
+    WHERE b.driver_id = $1 AND b.status IN ('CONFIRMED','ONGOING')
     ORDER BY b.trip_datetime ASC
   `, [req.driver.id]);
-  res.json({ bookings: bookings.map(publicBooking) });
+  const cab = await driverCab(req.driver.id);
+  let offers = [];
+  if (req.driver.is_online && cab?.active) {
+    offers = (await query(`
+      SELECT b.* FROM bookings b
+      WHERE b.status = 'APPROVED' AND b.driver_id IS NULL AND b.car_category = $1
+        AND NOT EXISTS (SELECT 1 FROM driver_status_events e WHERE e.booking_id = b.id AND e.driver_id = $2 AND e.status = 'BOOKING_REJECTED')
+        AND NOT EXISTS (
+          SELECT 1 FROM bookings o WHERE o.vehicle_id = $3 AND o.id <> b.id AND o.status IN ('CONFIRMED','ONGOING')
+            AND abs(extract(epoch FROM (o.trip_datetime - b.trip_datetime))) < $4
+        )
+      ORDER BY b.trip_datetime ASC
+    `, [cab.category, req.driver.id, cab.id, TRIP_GAP_SECONDS]))
+      .filter((booking) => inServiceArea(booking, req.driver))
+      .map(offerView);
+  }
+  res.json({ bookings: bookings.map(publicBooking), offers });
 }));
 
 app.patch('/driver/bookings/:id/response', requireDriver, handle(async (req, res) => {
@@ -932,36 +1019,54 @@ app.patch('/driver/bookings/:id/response', requireDriver, handle(async (req, res
   if (!['ACCEPT', 'REJECT'].includes(decision)) {
     return res.status(400).json({ error: 'decision must be ACCEPT or REJECT' });
   }
-  const booking = await one('SELECT * FROM bookings WHERE id = $1 AND driver_id = $2', [bookingId, req.driver.id]);
-  if (!booking) return res.status(404).json({ error: 'Booking offer not found' });
-  if (booking.status !== 'PENDING' || booking.driver_status !== 'OFFERED') {
-    return res.status(409).json({ error: 'This booking is no longer awaiting a response' });
-  }
 
   if (decision === 'REJECT') {
-    await releaseOffer(bookingId, req.driver.id);
-    await runDispatchSweep();
+    const open = await one("SELECT id FROM bookings WHERE id = $1 AND status = 'APPROVED'", [bookingId]);
+    if (!open) return res.status(409).json({ error: 'This booking is no longer available' });
+    await query(`
+      INSERT INTO driver_status_events (booking_id, driver_id, status)
+      SELECT $1, $2, 'BOOKING_REJECTED'
+      WHERE NOT EXISTS (SELECT 1 FROM driver_status_events WHERE booking_id = $1 AND driver_id = $2 AND status = 'BOOKING_REJECTED')
+    `, [bookingId, req.driver.id]);
     return res.json({ accepted: false });
   }
 
-  const accepted = await transaction(async (client) => {
-    const updated = await one(`
-      UPDATE bookings SET status = 'CONFIRMED', driver_status = 'BOOKING_ACCEPTED', updated_at = now()
-      WHERE id = $1 AND driver_id = $2 AND status = 'PENDING' AND driver_status = 'OFFERED'
-      RETURNING id
-    `, [bookingId, req.driver.id], client);
-    if (!updated) return false;
-    await query(`
-      INSERT INTO booking_status_events (booking_id, old_status, new_status, note)
-      VALUES ($1, 'PENDING', 'CONFIRMED', 'Accepted by assigned partner driver')
-    `, [bookingId], client);
-    await query("INSERT INTO driver_status_events (booking_id, driver_id, status) VALUES ($1, $2, 'BOOKING_ACCEPTED')",
-      [bookingId, req.driver.id], client);
-    return true;
-  });
-  if (!accepted) return res.status(409).json({ error: 'This booking is no longer awaiting a response' });
-  res.json({ accepted: true, booking: publicBooking(await getBooking(bookingId)) });
+  // First driver to get here wins: the booking row lock lets only one acceptance through.
+  const cab = await driverCab(req.driver.id);
+  if (!cab?.active) return res.status(409).json({ error: 'Your cab is paused. Please call SadakYatra.' });
+  if (!req.driver.is_online) return res.status(409).json({ error: 'Go online to accept bookings' });
+  try {
+    const { booking } = await transitionBooking(bookingId, ['APPROVED'], 'CONFIRMED', {
+      actorId: req.driver.user_id,
+      note: `Accepted by ${req.driver.driver_name}`,
+      guard: async (client, current) => {
+        if (current.car_category !== cab.category) throw new BookingError(409, 'This booking needs a different vehicle type');
+        await query('SELECT id FROM vehicles WHERE id = $1 FOR UPDATE', [cab.id], client);
+        const clash = await cabConflict(client, cab.id, current);
+        if (clash) throw new BookingError(409, `You already have ${clash} around that time`);
+      },
+      fields: { vehicle_id: cab.id, driver_id: req.driver.id, driver_status: 'BOOKING_ACCEPTED' }
+    });
+    await query("INSERT INTO driver_status_events (booking_id, driver_id, status) VALUES ($1, $2, 'BOOKING_ACCEPTED')", [bookingId, req.driver.id]);
+    notifyDriverAssigned(booking);
+    notifyStaff('bookings', {
+      title: `Driver accepted · ${booking.booking_ref}`,
+      body: `${req.driver.driver_name} · ${cab.cab_ref} ${cab.plate_no} · ${tripLine(booking)}`,
+      data: { bookingId }
+    });
+    res.json({ accepted: true, booking: publicBooking(booking) });
+  } catch (error) {
+    if (error.code === 'WRONG_STATUS') return res.status(409).json({ error: 'Sorry, this booking was already taken or is no longer available' });
+    throw error;
+  }
 }));
+
+const CUSTOMER_TRIP_UPDATES = {
+  GOING_TO_PICKUP: ['Driver on the way', 'Your driver has started towards the pickup point.'],
+  ARRIVED: ['Driver has arrived', 'Your driver is waiting at the pickup point.'],
+  TRIP_STARTED: ['Trip started', 'Have a safe journey with SadakYatra.'],
+  TRIP_COMPLETED: ['Trip completed', 'Thank you for riding with SadakYatra!']
+};
 
 app.patch('/driver/bookings/:id/status', requireDriver, handle(async (req, res) => {
   const bookingId = Number(req.params.id);
@@ -972,7 +1077,7 @@ app.patch('/driver/bookings/:id/status', requireDriver, handle(async (req, res) 
     ARRIVED: 'TRIP_STARTED',
     TRIP_STARTED: 'TRIP_COMPLETED'
   };
-  const booking = await one('SELECT * FROM bookings WHERE id = $1 AND driver_id = $2', [bookingId, req.driver.id]);
+  const booking = await one("SELECT * FROM bookings WHERE id = $1 AND driver_id = $2 AND status IN ('CONFIRMED','ONGOING')", [bookingId, req.driver.id]);
   if (!booking) return res.status(404).json({ error: 'Assigned booking not found' });
   if (nextStatus[booking.driver_status] !== status) {
     return res.status(409).json({ error: 'Trip status must advance to the next valid stage' });
@@ -982,22 +1087,20 @@ app.patch('/driver/bookings/:id/status', requireDriver, handle(async (req, res) 
   const advanced = await transaction(async (client) => {
     const updated = await one(`
       UPDATE bookings SET driver_status = $1, status = $2, updated_at = now()
-      WHERE id = $3 AND driver_status = $4
+      WHERE id = $3 AND driver_status = $4 AND status IN ('CONFIRMED','ONGOING')
       RETURNING id
     `, [status, bookingStatus, bookingId, booking.driver_status], client);
     if (!updated) return false;
     await query('INSERT INTO driver_status_events (booking_id, driver_id, status) VALUES ($1, $2, $3)',
       [bookingId, req.driver.id, status], client);
     if (bookingStatus !== booking.status) {
-      await query(`
-        INSERT INTO booking_status_events (booking_id, old_status, new_status, note)
-        VALUES ($1, $2, $3, $4)
-      `, [bookingId, booking.status, bookingStatus, status], client);
+      await recordStatus(client, bookingId, booking.status, bookingStatus, req.driver.user_id, status);
     }
     return true;
   });
   if (!advanced) return res.status(409).json({ error: 'Trip status must advance to the next valid stage' });
-  if (status === 'TRIP_COMPLETED') await runDispatchSweep();
+  const [title, body] = CUSTOMER_TRIP_UPDATES[status];
+  notifyUsers([booking.customer_id], { title: `${title} · ${booking.booking_ref}`, body, data: { bookingId } });
   res.json({ booking: publicBooking(await getBooking(bookingId)) });
 }));
 
@@ -1036,6 +1139,7 @@ app.get('/bookings/:id/tracking', handle(async (req, res) => {
 }));
 
 app.use((error, _req, res, _next) => {
+  if (error instanceof BookingError) return res.status(error.status).json({ error: error.message });
   console.error('Request failed', error);
   res.status(500).json({ error: 'Something went wrong. Please try again.' });
 });

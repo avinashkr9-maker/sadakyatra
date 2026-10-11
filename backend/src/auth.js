@@ -1,4 +1,4 @@
-import { createHash, randomBytes, randomInt, timingSafeEqual } from 'node:crypto';
+import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { one, query, transaction } from './db.js';
 
 const OTP_TTL_SECONDS = 5 * 60;
