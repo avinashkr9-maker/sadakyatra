@@ -84,9 +84,12 @@ const requireDriver = handle(async (req, res, next) => {
     SELECT d.*, p.active AS partner_active
     FROM drivers d
     JOIN partners p ON p.id = d.partner_id
-    WHERE d.user_id = $1 AND d.is_active AND p.active
+    WHERE d.user_id = $1
   `, [req.account.id]);
-  if (!driver) return res.status(403).json({ error: 'Your cab partner account is not active.' });
+  if (!driver) return res.status(403).json({ error: 'No approved cab is linked to this number yet.' });
+  if (!driver.is_active || !driver.partner_active) {
+    return res.status(403).json({ error: 'Your cab partner account is paused by SadakYatra. Please call +91 9304057169.' });
+  }
   req.driver = driver;
   next();
 });
