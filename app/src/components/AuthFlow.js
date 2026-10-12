@@ -262,13 +262,10 @@ export function ProfileScreen({ account, onSaved }) {
 }
 
 // ---- 4. Partner registration ---------------------------------------------
-const CATEGORIES = [
-  { value: 'sedan', label: 'Sedan', seats: '4' },
-  { value: 'suv', label: 'SUV', seats: '6' },
-  { value: 'traveller', label: 'Tempo Traveller', seats: '12' }
-];
+// "7 seats" / "12-26 seats" -> pre-fill the seats box with the first number.
+const defaultSeats = (category) => (String(category?.seats || '').match(/\d+/) || [''])[0];
 
-export function PartnerSignupScreen({ account, onSubmitted, onBack }) {
+export function PartnerSignupScreen({ account, categories = [], onSubmitted, onBack }) {
   const [partnerType, setPartnerType] = useState(null);
   const [form, setForm] = useState({
     vehicleCategory: 'sedan', vehicleModel: '', vehicleNumber: '', seats: '4', city: 'Muzaffarpur', operatingArea: '',
@@ -328,13 +325,13 @@ export function PartnerSignupScreen({ account, onSubmitted, onBack }) {
       <View style={styles.card}>
         <Text style={styles.fieldLabel}>Vehicle category</Text>
         <View style={styles.segment}>
-          {CATEGORIES.map((category) => (
+          {categories.map((category) => (
             <Pressable
-              key={category.value}
-              onPress={() => setForm((current) => ({ ...current, vehicleCategory: category.value, seats: category.seats }))}
-              style={[styles.segmentItem, form.vehicleCategory === category.value && styles.segmentItemActive]}
+              key={category.key}
+              onPress={() => setForm((current) => ({ ...current, vehicleCategory: category.key, seats: defaultSeats(category) }))}
+              style={[styles.segmentItem, form.vehicleCategory === category.key && styles.segmentItemActive]}
             >
-              <Text style={[styles.segmentText, form.vehicleCategory === category.value && styles.segmentTextActive]}>{category.label}</Text>
+              <Text style={[styles.segmentText, form.vehicleCategory === category.key && styles.segmentTextActive]}>{category.name}</Text>
             </Pressable>
           ))}
         </View>
@@ -486,8 +483,8 @@ const styles = StyleSheet.create({
   resendDisabled: { color: brand.inkMuted },
   helpRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: 12 },
   helpText: { color: brand.muted, fontSize: 13 },
-  segment: { flexDirection: 'row', gap: 8, marginBottom: 14 },
-  segmentItem: { flex: 1, minHeight: 44, borderRadius: 12, borderWidth: 1, borderColor: brand.line, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 4 },
+  segment: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 14 },
+  segmentItem: { flexGrow: 1, minWidth: '30%', minHeight: 44, borderRadius: 12, borderWidth: 1, borderColor: brand.line, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 4 },
   segmentItemActive: { borderColor: brand.black, backgroundColor: brand.yellow },
   segmentText: { color: brand.ink, fontSize: 13, fontWeight: '700', textAlign: 'center' },
   segmentTextActive: { color: brand.black, fontWeight: '900' },

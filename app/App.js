@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
 import {
   Alert,
   ImageBackground,
@@ -17,10 +17,10 @@ import {
   useWindowDimensions,
   View
 } from 'react-native';
-import MapView, { Marker } from 'react-native-maps';
+import MapView, { Marker, Polyline } from 'react-native-maps';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Location from 'expo-location';
-import { AdminDashboard, DriverDashboard, OwnerFleet, signOutDriver } from './src/components/PartnerOperations';
+import { AdminDashboard, DriverDashboard, OwnerFleet, setCategoryNames, signOutDriver } from './src/components/PartnerOperations';
 import {
   LoadingScreen, OtpLoginScreen, PartnerSignupScreen, PartnerStatusScreen, ProfileScreen, RoleShell, VIEW_LABELS, WelcomeScreen
 } from './src/components/AuthFlow';
@@ -35,6 +35,7 @@ import {
   setSessionExpiredHandler,
   setBaseUrl,
   createBooking,
+  getQuotes,
   listBookings,
   getBooking,
   getBookingTracking,
@@ -79,19 +80,25 @@ const BRAND = {
   reviews: 40
 };
 
-// Offline copy of the backend fareConfig (/app/config replaces it when reachable).
-const DEFAULT_FARE_CONFIG = {
-  categories: {
-    sedan: { perKm: 23, minimumFare: 1500, localFare: 1500 },
-    suv: { perKm: 27, minimumFare: 1500, localFare: 2000 },
-    traveller: { perKm: 35, minimumFare: 3500, localFare: 3500 }
-  },
-  roundTripMultiplier: 1.75,
-  driverAllowance: 300,
-  tollPerKm: 1.5,
+// Shown until /app/config answers; real prices always come from the server.
+const DEFAULT_PRICING = {
+  categories: [
+    { key: 'hatchback', name: 'Hatchback', seats: '4 seats', models: 'WagonR · Swift', perKm: 20, minFare: 1300, localFare: 1200 },
+    { key: 'sedan', name: 'Sedan', seats: '4 seats', models: 'Dzire · Amaze', perKm: 23, minFare: 1500, localFare: 1500 },
+    { key: 'suv', name: 'SUV', seats: '6 seats', models: 'Ertiga · Scorpio', perKm: 27, minFare: 1500, localFare: 2000 },
+    { key: 'seven_seater', name: '7-Seater', seats: '7 seats', models: 'Innova Crysta', perKm: 30, minFare: 2000, localFare: 2200 },
+    { key: 'traveller', name: 'Tempo Traveller', seats: '12-26 seats', models: 'Force Traveller', perKm: 35, minFare: 3500, localFare: 3500 }
+  ],
   gstPercent: 5
 };
-
+const PricingContext = createContext(DEFAULT_PRICING);
+const usePricing = () => useContext(PricingContext);
+const findCategory = (pricing, key) => pricing.categories.find((category) => category.key === key);
+const categoryLabel = (pricing, key) => findCategory(pricing, key)?.name || CATEGORY_NAMES[key] || key;
+const perKmText = (pricing, key) => (findCategory(pricing, key) ? `₹${findCategory(pricing, key).perKm}/km` : '');
+// "Sedan ₹23/km · SUV ₹27/km · Tempo Traveller ₹35/km"
+const rateSummary = (pricing) => ['sedan', 'suv', 'traveller'].filter((key) => findCategory(pricing, key))
+  .map((key) => `${categoryLabel(pricing, key)} ${perKmText(pricing, key)}`).join(' · ');
 
 // Store numbers as the plain 10-digit form so "+91 93040 57169" and
 // "9304057169" are the same customer everywhere.
@@ -100,7 +107,8 @@ function normalizePhone(value) {
   return digits.length === 12 && digits.startsWith('91') ? digits.slice(2) : digits.slice(-10);
 }
 
-const CATEGORY_NAMES = { sedan: 'Sedan', suv: 'SUV', traveller: 'Tempo Traveller' };
+const CATEGORY_NAMES = { hatchback: 'Hatchback', sedan: 'Sedan', suv: 'SUV', seven_seater: '7-Seater', traveller: 'Tempo Traveller' };
+const TRIP_TYPE_LABELS = { ONE_WAY: 'One-way', ROUND_TRIP: 'Round trip', LOCAL: 'Local ride' };
 
 const BOOKING_STATUS = {
   PENDING_APPROVAL: { label: 'Awaiting approval', style: 'statusPending' },
@@ -145,24 +153,6 @@ function formatFriendlyDate(date) {
   return `${day}, ${date.toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit' })}`;
 }
 
-// Mirrors calculateFareBreakdown in backend/src/server.js.
-function calculateFareBreakdown(category, distanceKm, service, config = DEFAULT_FARE_CONFIG) {
-  const rate = config.categories[category];
-  if (!rate) return null;
-  const isLocal = service === 'Local City Ride';
-  const roundTrip = service === 'Round Trip';
-  if (!isLocal && !(distanceKm > 0)) return null;
-
-  const baseFare = isLocal
-    ? rate.localFare
-    : Math.round(Math.max(distanceKm * rate.perKm, rate.minimumFare) * (roundTrip ? config.roundTripMultiplier : 1));
-  const driverAllowance = isLocal ? 0 : config.driverAllowance;
-  const tollAndParking = isLocal ? 0 : Math.round(distanceKm * config.tollPerKm * (roundTrip ? 2 : 1));
-  const subtotal = baseFare + driverAllowance + tollAndParking;
-  const gst = Math.round((subtotal * config.gstPercent) / 100);
-  return { baseFare, driverAllowance, tollAndParking, gst, total: subtotal + gst };
-}
-
 function rupees(value) {
   return `₹${Math.round(value).toLocaleString('en-IN')}`;
 }
@@ -179,41 +169,22 @@ const img = {
   airport: require('./assets/loveable/service-airport.jpg')
 };
 
-const FLEET = [
-  {
-    id: 'sedan',
-    name: 'Premium Sedan',
-    models: 'Honda Amaze · Swift Dzire',
-    seats: '4 Seats',
-    price: '₹23/km',
-    unit: '₹1,500 minimum',
-    image: img.sedan,
-    badge: 'MOST POPULAR',
-    features: ['Fully Air Conditioned', 'Professional Chauffeur', 'Best for Airport & Drop Only']
-  },
-  {
-    id: 'suv',
-    name: 'Luxury SUV',
-    models: 'Toyota Innova · Ertiga · Scorpio',
-    seats: '6-7 Seats',
-    price: '₹27/km',
-    unit: '₹1,500 minimum',
-    image: img.suv,
-    features: ['Extra Space & Legroom', 'Family Drop-Only Trips', 'Wedding Decoration Available']
-  },
-  {
-    id: 'tempo',
-    name: 'Tempo Traveller',
-    models: 'Force Traveller · Minibus',
-    seats: '12-26 Seats',
-    price: '₹35/km',
-    unit: '₹3,500 minimum',
-    image: img.tempo,
-    features: ['Pushback Seating', 'Baraats, Pilgrimages & Trips', 'Dual Drivers Long Routes']
-  }
-];
-
-const FLEET_CATEGORY = { sedan: 'sedan', suv: 'suv', tempo: 'traveller' };
+const CATEGORY_ART = { hatchback: img.sedan, sedan: img.sedan, suv: img.suv, seven_seater: img.suv, traveller: img.tempo };
+const CATEGORY_DETAILS = {
+  hatchback: { features: ['Budget-friendly AC cab', 'Best for 1-3 people', 'City & short drop trips'] },
+  sedan: { badge: 'MOST POPULAR', features: ['Fully Air Conditioned', 'Professional Chauffeur', 'Best for Airport & Drop Only'] },
+  suv: { features: ['Extra Space & Legroom', 'Family Drop-Only Trips', 'Wedding Decoration Available'] },
+  seven_seater: { features: ['Captain-seat comfort', 'Big families & luggage', 'Long outstation trips'] },
+  traveller: { features: ['Pushback Seating', 'Baraats, Pilgrimages & Trips', 'Dual Drivers Long Routes'] }
+};
+const fleetCard = (category) => ({
+  ...category,
+  image: CATEGORY_ART[category.key] || img.sedan,
+  badge: CATEGORY_DETAILS[category.key]?.badge,
+  features: CATEGORY_DETAILS[category.key]?.features || ['Clean AC cab', 'Professional chauffeur'],
+  price: `₹${category.perKm}/km`,
+  unit: `₹${Number(category.minFare).toLocaleString('en-IN')} minimum`
+});
 
 const SERVICES = [
   {
@@ -231,10 +202,10 @@ const SERVICES = [
   {
     id: 'outstation',
     title: 'Drop Only Cabs',
-    short: 'Drop Only · Sedan ₹23/km',
+    short: 'Drop Only & Round Trip cabs',
     description: "Door-to-door AC cab service across Bihar with Sedan and SUV rates calculated from the selected road distance.",
-    price: '₹23/km',
-    priceNote: 'Minimum fare ₹1,500 · round trip ×1.75',
+    price: (pricing) => perKmText(pricing, 'sedan'),
+    priceNote: () => 'One-way or round trip · all-inclusive price before you book',
     features: ['Door-to-Door', 'Rate Shared Before Confirmation', 'Clean AC Cab', 'One Way & Round Trip'],
     image: img.outstation,
     icon: Car,
@@ -245,8 +216,8 @@ const SERVICES = [
     title: 'Airport Transfer',
     short: 'Patna & Darbhanga airports · 24x7',
     description: 'Muzaffarpur se Patna Airport (PAT) aur Darbhanga Airport (DBR) - flight tracking, on-time pickup, zero waiting. Early morning special available.',
-    price: '₹23/km',
-    priceNote: 'Sedan · minimum fare ₹1,500',
+    price: (pricing) => perKmText(pricing, 'sedan'),
+    priceNote: () => 'Sedan · all-inclusive price before you book',
     features: ['Flight Tracking', 'On-Time Guarantee', 'Early Morning Pickup', 'Both Airports'],
     image: img.airport,
     icon: Plane,
@@ -257,8 +228,8 @@ const SERVICES = [
     title: 'Tempo Traveller Hire',
     short: '12-26 seater for groups & pilgrimage',
     description: 'Family trips, pilgrimage to Vaishali-Gaya-Bodh Gaya, baraat groups, corporate outings - 12 to 26 seater AC tempo with pushback seats.',
-    price: '₹35/km',
-    priceNote: 'Minimum fare ₹3,500 · all-inclusive price shown before booking',
+    price: (pricing) => perKmText(pricing, 'traveller'),
+    priceNote: () => 'All-inclusive price shown before booking',
     features: ['12-26 Seater', 'Pushback Seats', 'All Bihar Routes', 'Dual Drivers'],
     image: img.tempo,
     icon: Sparkles,
@@ -269,8 +240,8 @@ const SERVICES = [
     title: 'Local & Drop Only',
     short: 'All routes across Bihar',
     description: 'Muzaffarpur to Darbhanga, Sitamarhi, Motihari, Samastipur, Patna - sab routes cover. Local city rides bhi available. Instant taxi booking on WhatsApp.',
-    price: '₹23/km',
-    priceNote: 'Sedan · minimum fare ₹1,500',
+    price: (pricing) => perKmText(pricing, 'sedan'),
+    priceNote: () => 'Sedan · all-inclusive price before you book',
     features: ['All Bihar Routes', 'Local City Rides', 'Instant Booking', 'Same Driver Both Ways'],
     image: img.outstation,
     icon: MapPin,
@@ -307,12 +278,13 @@ const ROUTES = [
   { from: 'Muzaffarpur', to: 'Raxaul' }
 ];
 
-const serviceTypeMap = {
-  'Drop Only': 'OUTSTATION',
-  'Round Trip': 'OUTSTATION',
-  'Wedding Car - Baraat / Bidai': 'WEDDING',
-  'Airport Transfer': 'AIRPORT',
-  'Local City Ride': 'LOCAL'
+// Shortcuts from Home/Services: [trip type, service tag].
+const PRESET_SERVICES = {
+  'Drop Only': ['ONE_WAY', null],
+  'Round Trip': ['ROUND_TRIP', null],
+  'Wedding Car - Baraat / Bidai': ['ONE_WAY', 'WEDDING'],
+  'Airport Transfer': ['ONE_WAY', 'AIRPORT'],
+  'Local City Ride': ['LOCAL', null]
 };
 
 const REVIEWS = [
@@ -387,6 +359,22 @@ function defaultView(account, intent, lastView = null) {
 }
 
 function Root() {
+  const [pricing, setPricing] = useState(DEFAULT_PRICING);
+  useEffect(() => {
+    getAppConfig().then((config) => {
+      if (!config?.pricing?.categories?.length) return;
+      setPricing(config.pricing);
+      setCategoryNames(Object.fromEntries(config.pricing.categories.map((category) => [category.key, category.name])));
+    }).catch(() => {});
+  }, []);
+  return (
+    <PricingContext.Provider value={pricing}>
+      <RootScreens pricing={pricing} />
+    </PricingContext.Provider>
+  );
+}
+
+function RootScreens({ pricing }) {
   const [booting, setBooting] = useState(true);
   const [account, setAccount] = useState(null);
   const [intent, setIntent] = useState(null);
@@ -477,6 +465,7 @@ function Root() {
     return (
       <PartnerSignupScreen
         account={account}
+        categories={pricing.categories}
         onBack={() => chooseView('customer')}
         onSubmitted={(saved) => { applyAccount(saved); setView('partnerStatus'); }}
       />
@@ -523,7 +512,9 @@ function SadakYatraApp({ account, views, onSwitchView, onLogout, onJoinPartner }
   const [pickupLocation, setPickupLocation] = useState(placePin('Muzaffarpur'));
   const [dropLocation, setDropLocation] = useState(placePin('Patna'));
   const [carCategory, setCarCategory] = useState('sedan');
-  const [service, setService] = useState('Drop Only');
+  const [tripType, setTripType] = useState('ONE_WAY');
+  const [serviceTag, setServiceTag] = useState(null);
+  const [returnDate, setReturnDate] = useState(() => new Date(defaultTripDate().getTime() + 12 * 3600e3));
   const phone = account.phone;
   const [tripDate, setTripDate] = useState(defaultTripDate);
   const [lastTrip, setLastTrip] = useState(null);
@@ -536,7 +527,7 @@ function SadakYatraApp({ account, views, onSwitchView, onLogout, onJoinPartner }
   const [submitting, setSubmitting] = useState(false);
   const [apiUrl, setApiUrl] = useState('');
   const [authModalVisible, setAuthModalVisible] = useState(false);
-  const [fareConfig, setFareConfig] = useState(DEFAULT_FARE_CONFIG);
+  const pricing = usePricing();
 
   useEffect(() => {
     setBaseUrl(apiUrl);
@@ -546,9 +537,6 @@ function SadakYatraApp({ account, views, onSwitchView, onLogout, onJoinPartner }
   // login/booking turant lage (koi 7s wait nahi).
   useEffect(() => {
     warmUp();
-    getAppConfig()
-      .then((config) => { if (config?.fareConfig?.categories) setFareConfig(config.fareConfig); })
-      .catch(() => {});
   }, []);
 
   function goTo(nextTab) {
@@ -558,7 +546,11 @@ function SadakYatraApp({ account, views, onSwitchView, onLogout, onJoinPartner }
 
   // Open the booking form already filled in for what the customer tapped.
   function startBooking(preset = {}) {
-    if (preset.service) setService(preset.service);
+    if (preset.service && PRESET_SERVICES[preset.service]) {
+      const [nextTripType, tag] = PRESET_SERVICES[preset.service];
+      setTripType(nextTripType);
+      setServiceTag(tag);
+    }
     if (preset.category) setCarCategory(preset.category);
     if (preset.route) {
       setFrom(preset.route.from);
@@ -569,61 +561,71 @@ function SadakYatraApp({ account, views, onSwitchView, onLogout, onJoinPartner }
     goTo('book');
   }
 
-  function bookOnWhatsApp(routeDistanceKm) {
-    const fare = calculateFareBreakdown(carCategory, routeDistanceKm, service, fareConfig)?.total ?? null;
+  // Airport if either pin is an airport, wedding when started from the wedding shortcut.
+  function serviceType() {
+    if (tripType === 'LOCAL') return 'LOCAL';
+    if (serviceTag) return serviceTag;
+    return /airport/i.test(`${from} ${to}`) ? 'AIRPORT' : 'OUTSTATION';
+  }
+
+  function bookOnWhatsApp(routeDistanceKm, fare) {
     const msg =
       `Hi ${BRAND.name}! Booking request:\n` +
-      `• Service: ${service}\n` +
-      `• Vehicle: ${CATEGORY_NAMES[carCategory] || carCategory}\n` +
+      `• Trip: ${TRIP_TYPE_LABELS[tripType]}${serviceTag === 'WEDDING' ? ' (wedding)' : ''}\n` +
+      `• Vehicle: ${categoryLabel(pricing, carCategory)}\n` +
       `• From: ${from}\n` +
       `• To: ${to}\n` +
       (routeDistanceKm ? `• Road distance: ${routeDistanceKm} km\n` : '') +
-      (fare !== null ? `• Final payable (all-inclusive): ${rupees(fare)}\n` : '') +
+      (fare ? `• Final payable (all-inclusive): ${rupees(fare.total)}\n` : '') +
       `• Pickup: ${formatFriendlyDate(tripDate)}\n` +
+      (tripType === 'ROUND_TRIP' ? `• Return: ${formatFriendlyDate(returnDate)}\n` : '') +
       (phone ? `• Phone: ${phone}\n` : '') +
       `Please confirm availability.`;
     Linking.openURL(wa(msg));
   }
 
-  async function sendBooking(routeDistanceKm) {
+  async function sendBooking(routeDistanceKm, fare) {
     if (!pickupLocation || !dropLocation) {
       return Alert.alert('Set your pins', 'Tap Pickup and Drop to place both pins on the map.');
     }
-    if (service !== 'Local City Ride' && !(routeDistanceKm > 0)) {
+    if (tripType !== 'LOCAL' && !(routeDistanceKm > 0)) {
       return Alert.alert('Road distance unavailable', 'We could not calculate the road route yet. Check your internet or move the pins slightly.');
     }
     if (tripDate.getTime() < Date.now() + 15 * 60 * 1000) {
       return Alert.alert('Pick a later time', 'Pickup time must be at least 15 minutes from now.');
     }
+    if (tripType === 'ROUND_TRIP' && returnDate <= tripDate) {
+      return Alert.alert('Check the return time', 'The return time must be after the pickup time.');
+    }
 
     // Backend offline ho to seedha WhatsApp par booking bhejo.
     if (!(await isBackendOnline())) {
-      bookOnWhatsApp(routeDistanceKm);
+      bookOnWhatsApp(routeDistanceKm, fare);
       return;
     }
 
     setSubmitting(true);
     try {
       const data = await createBooking({
-        serviceType: serviceTypeMap[service] || 'OUTSTATION',
+        serviceType: serviceType(),
+        tripType,
         pickup: from,
         drop: to,
         tripDatetime: tripDate.toISOString(),
+        returnDatetime: tripType === 'ROUND_TRIP' ? returnDate.toISOString() : undefined,
         carCategory,
         pickupLatitude: pickupLocation?.latitude ?? null,
         pickupLongitude: pickupLocation?.longitude ?? null,
         dropLatitude: dropLocation?.latitude ?? null,
         dropLongitude: dropLocation?.longitude ?? null,
-        routeDistanceKm: routeDistanceKm ?? null,
-        roundTrip: service === 'Round Trip',
-        customerNote: service
+        routeDistanceKm: routeDistanceKm ?? null
       });
       const booking = data.booking;
 
       setLastTrip({
         from,
         to,
-        service,
+        service: TRIP_TYPE_LABELS[tripType],
         date: formatFriendlyDate(tripDate),
         fare: booking.estimated_fare ? rupees(booking.estimated_fare) : 'Quote pending'
       });
@@ -636,8 +638,12 @@ function SadakYatraApp({ account, views, onSwitchView, onLogout, onJoinPartner }
       fetchBookings();
       fetchBookingDetails(booking.id);
     } catch (err) {
-      // In-app booking fail — customer ko rokna nahi, WhatsApp par bhejo.
-      bookOnWhatsApp(routeDistanceKm);
+      if (err.status === 400) {
+        Alert.alert('Please check your booking', err.message);
+      } else {
+        // In-app booking fail — customer ko rokna nahi, WhatsApp par bhejo.
+        bookOnWhatsApp(routeDistanceKm, fare);
+      }
     } finally {
       setSubmitting(false);
     }
@@ -773,10 +779,11 @@ function SadakYatraApp({ account, views, onSwitchView, onLogout, onJoinPartner }
             to={to}
             pickupLocation={pickupLocation}
             dropLocation={dropLocation}
-            service={service}
+            tripType={tripType}
             carCategory={carCategory}
             phone={phone}
             tripDate={tripDate}
+            returnDate={returnDate}
             onFrom={setFrom}
             onTo={setTo}
             onPickupLocation={(location) => { setPickupLocation(location); setFrom(location?.label || from); }}
@@ -785,12 +792,12 @@ function SadakYatraApp({ account, views, onSwitchView, onLogout, onJoinPartner }
               setFrom(to); setTo(from);
               setPickupLocation(dropLocation); setDropLocation(pickupLocation);
             }}
-            onService={setService}
+            onTripType={(nextTripType) => { setTripType(nextTripType); if (nextTripType === 'LOCAL') setServiceTag(null); }}
             onCarCategory={setCarCategory}
             onTripDate={setTripDate}
-            onSend={(distance) => sendBooking(distance)}
+            onReturnDate={setReturnDate}
+            onSend={sendBooking}
             isSubmitting={submitting}
-            fareConfig={fareConfig}
           />
         )}
         {tab === 'about' && <AboutScreen lastTrip={lastTrip} />}
@@ -998,12 +1005,13 @@ function RoutePreview({ pickupLabel, onPress }) {
 }
 
 function QuickPills({ onStart }) {
+  const pricing = usePricing();
   const pills = [
     { icon: Plane, label: 'Patna Airport', sub: 'Airport transfer', preset: { service: 'Airport Transfer', route: { from: 'Muzaffarpur', to: 'Patna Airport' } } },
     { icon: Heart, label: 'Wedding Car', sub: 'from ₹4,500', preset: { service: 'Wedding Car - Baraat / Bidai' } },
     { icon: Briefcase, label: 'Drop Only', sub: 'price by distance', preset: { service: 'Drop Only' } },
     { icon: Users, label: 'Tempo Traveller', sub: '12-26 seats', preset: { category: 'traveller' } },
-    { icon: MapPin, label: 'Darbhanga', sub: 'Sedan ₹23/km', preset: { service: 'Drop Only', route: { from: 'Muzaffarpur', to: 'Darbhanga' } } }
+    { icon: MapPin, label: 'Darbhanga', sub: `Sedan ${perKmText(pricing, 'sedan')}`, preset: { service: 'Drop Only', route: { from: 'Muzaffarpur', to: 'Darbhanga' } } }
   ];
   return (
     <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.pillRow}>
@@ -1024,12 +1032,13 @@ function QuickPills({ onStart }) {
 }
 
 function FleetScreen({ onStart }) {
+  const pricing = usePricing();
   return (
     <View>
       <SectionTitle eyebrow="Our Fleet" title="Choose your ride" subtitle="Well-maintained, sanitized vehicles for every trip across Bihar." />
       <View style={styles.fleetArticleList}>
-        {FLEET.map((car) => (
-          <CardGradient key={car.id} style={styles.fleetArticle}>
+        {pricing.categories.map(fleetCard).map((car) => (
+          <CardGradient key={car.key} style={styles.fleetArticle}>
             <View style={styles.fleetImageWrap}>
               <Image source={car.image} style={styles.fleetImage} />
               {car.badge ? <Text style={styles.fleetBadge}>{car.badge}</Text> : null}
@@ -1052,7 +1061,7 @@ function FleetScreen({ onStart }) {
                   <Text style={styles.fleetPrice}>{car.price}</Text>
                   <Text style={styles.priceUnit}>{car.unit}</Text>
                 </View>
-                <PrimaryButton label="Book Now" icon={ArrowRight} onPress={() => onStart({ category: FLEET_CATEGORY[car.id] })} />
+                <PrimaryButton label="Book Now" icon={ArrowRight} onPress={() => onStart({ category: car.key })} />
               </View>
             </View>
           </CardGradient>
@@ -1063,10 +1072,11 @@ function FleetScreen({ onStart }) {
 }
 
 function FleetList({ compact = false, onSelect }) {
+  const pricing = usePricing();
   return (
     <View style={styles.listGap}>
-      {FLEET.map((car) => (
-        <Pressable key={car.id} onPress={() => onSelect?.(FLEET_CATEGORY[car.id])}>
+      {pricing.categories.map(fleetCard).map((car) => (
+        <Pressable key={car.key} onPress={() => onSelect?.(car.key)}>
           <CardGradient style={styles.rideRow}>
             <Image source={car.image} style={styles.rideImage} />
             <View style={styles.flex}>
@@ -1074,7 +1084,7 @@ function FleetList({ compact = false, onSelect }) {
                 <Text style={styles.rideName}>{car.name}</Text>
                 {car.badge ? <Text style={styles.badge}>{car.badge}</Text> : null}
               </View>
-              <Text style={styles.rideMeta}>{car.seats} · {car.models}</Text>
+              <Text style={styles.rideMeta} numberOfLines={1}>{[car.seats, car.models].filter(Boolean).join(' · ')}</Text>
               {!compact ? <Text style={styles.rideFeature}>Clean AC cab · professional chauffeur</Text> : null}
             </View>
             <View style={styles.priceBlock}>
@@ -1089,6 +1099,7 @@ function FleetList({ compact = false, onSelect }) {
 }
 
 function ServicesScreen({ onStart }) {
+  const pricing = usePricing();
   return (
     <View>
       <SectionTitle eyebrow="Every Need Covered" title="Services for every occasion" subtitle="From baraat entries to airport drops - across Muzaffarpur & Bihar." />
@@ -1115,8 +1126,8 @@ function ServicesScreen({ onStart }) {
               </View>
               <View style={styles.serviceFooter}>
                 <View style={styles.flex}>
-                  <Text style={styles.servicePrice}>{service.price}</Text>
-                  <Text style={styles.priceUnit}>{service.priceNote}</Text>
+                  <Text style={styles.servicePrice}>{typeof service.price === 'function' ? service.price(pricing) : service.price}</Text>
+                  <Text style={styles.priceUnit}>{typeof service.priceNote === 'function' ? service.priceNote(pricing) : service.priceNote}</Text>
                 </View>
                 <Pressable style={styles.callSquareSmall} accessibilityLabel={`Ask about ${service.title} on WhatsApp`}
                   onPress={() => Linking.openURL(wa(`Hi ${BRAND.name}! I'm interested in ${service.title}. Please share details.`))}>
@@ -1134,57 +1145,173 @@ function ServicesScreen({ onStart }) {
   );
 }
 
-function BookScreen({ from, to, pickupLocation, dropLocation, service, carCategory, phone, tripDate, onFrom, onTo, onPickupLocation, onDropLocation, onSwap, onService, onCarCategory, onPhone, onTripDate, onSend, isSubmitting, fareConfig }) {
-  const [pickerTarget, setPickerTarget] = useState(null);
-  const [routeDistanceKm, setRouteDistanceKm] = useState(null);
-  const [routeLoading, setRouteLoading] = useState(false);
-  const [routeError, setRouteError] = useState(null);
+const TRIP_TABS = [
+  { id: 'ONE_WAY', label: 'One-Way' },
+  { id: 'ROUND_TRIP', label: 'Round-Trip' },
+  { id: 'LOCAL', label: 'Local' }
+];
 
+function formatDuration(seconds) {
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `${minutes} min`;
+  const hours = Math.floor(minutes / 60);
+  return `${hours} hr${hours > 1 ? 's' : ''}${minutes % 60 ? ` ${minutes % 60} min` : ''}`;
+}
+
+function tripDaysBetween(start, end) {
+  return Math.max(1, Math.ceil((end - start) / 86400000));
+}
+
+// Road route between the two pins (OpenStreetMap routing): distance, duration and the line to draw.
+function useRoadRoute(pickupLocation, dropLocation) {
+  const [route, setRoute] = useState({ loading: false, distanceKm: null, durationSec: null, coordinates: [], error: null });
   useEffect(() => {
     if (!pickupLocation || !dropLocation) {
-      setRouteDistanceKm(null);
-      setRouteLoading(false);
-      setRouteError(null);
+      setRoute({ loading: false, distanceKm: null, durationSec: null, coordinates: [], error: null });
       return undefined;
     }
-
-    setRouteDistanceKm(null);
-    setRouteLoading(true);
-    setRouteError(null);
+    setRoute((current) => ({ ...current, loading: true, error: null }));
     const controller = new AbortController();
     const timer = setTimeout(async () => {
       try {
-        const url = `https://router.project-osrm.org/route/v1/driving/${pickupLocation.longitude},${pickupLocation.latitude};${dropLocation.longitude},${dropLocation.latitude}?overview=false`;
+        const url = `https://router.project-osrm.org/route/v1/driving/${pickupLocation.longitude},${pickupLocation.latitude};${dropLocation.longitude},${dropLocation.latitude}?overview=simplified&geometries=geojson`;
         const response = await fetch(url, { signal: controller.signal });
         const result = await response.json();
-        if (!response.ok || result.code !== 'Ok' || !result.routes?.[0]) {
-          throw new Error('A road route could not be found for these pins.');
-        }
-        setRouteDistanceKm(Math.round((result.routes[0].distance / 1000) * 10) / 10);
+        const best = result.routes?.[0];
+        if (!response.ok || result.code !== 'Ok' || !best) throw new Error('No road route found between these pins. Move a pin slightly.');
+        setRoute({
+          loading: false,
+          distanceKm: Math.round((best.distance / 1000) * 10) / 10,
+          durationSec: best.duration,
+          coordinates: best.geometry.coordinates.map(([longitude, latitude]) => ({ latitude, longitude })),
+          error: null
+        });
       } catch (error) {
         if (error.name !== 'AbortError') {
-          setRouteDistanceKm(null);
-          setRouteError(error.message || 'Road distance is temporarily unavailable.');
+          setRoute({ loading: false, distanceKm: null, durationSec: null, coordinates: [], error: error.message || 'Road distance is temporarily unavailable.' });
         }
-      } finally {
-        if (!controller.signal.aborted) setRouteLoading(false);
       }
     }, 350);
-
     return () => {
       clearTimeout(timer);
       controller.abort();
     };
   }, [pickupLocation?.latitude, pickupLocation?.longitude, dropLocation?.latitude, dropLocation?.longitude]);
+  return route;
+}
 
-  const fare = calculateFareBreakdown(carCategory, routeDistanceKm, service, fareConfig);
+// Live prices for every vehicle type from the server, refreshed when the trip changes.
+function useQuotes({ tripType, distanceKm, tripDate, returnDate, pickupLocation, dropLocation }) {
+  const [state, setState] = useState({ loading: false, byKey: {}, days: 1, error: null });
+  const ready = tripType === 'LOCAL' || distanceKm > 0;
+  useEffect(() => {
+    if (!ready) {
+      setState({ loading: false, byKey: {}, days: 1, error: null });
+      return undefined;
+    }
+    let cancelled = false;
+    setState((current) => ({ ...current, loading: true, error: null }));
+    const timer = setTimeout(() => {
+      getQuotes({
+        tripType,
+        distanceKm,
+        tripDatetime: tripDate.toISOString(),
+        returnDatetime: tripType === 'ROUND_TRIP' ? returnDate.toISOString() : undefined,
+        pickupLatitude: pickupLocation?.latitude,
+        pickupLongitude: pickupLocation?.longitude,
+        dropLatitude: dropLocation?.latitude,
+        dropLongitude: dropLocation?.longitude
+      })
+        .then((result) => {
+          if (cancelled) return;
+          setState({ loading: false, byKey: Object.fromEntries(result.quotes.map((item) => [item.key, item.quote])), days: result.days, error: null });
+        })
+        .catch((error) => {
+          if (!cancelled) setState({ loading: false, byKey: {}, days: 1, error: error.offline ? 'Prices need internet. You can still book on WhatsApp.' : error.message });
+        });
+    }, 250);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [ready, tripType, distanceKm, tripDate.getTime(), returnDate.getTime(), pickupLocation?.latitude, dropLocation?.latitude]);
+  return state;
+}
+
+function RouteMap({ pickupLocation, dropLocation, coordinates }) {
+  const mapRef = useRef(null);
+  const points = coordinates.length ? coordinates : [pickupLocation, dropLocation].filter(Boolean);
+  useEffect(() => {
+    if (points.length < 2) return;
+    const timer = setTimeout(() => {
+      mapRef.current?.fitToCoordinates(points, { edgePadding: { top: 40, right: 40, bottom: 40, left: 40 }, animated: true });
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [points.length, pickupLocation?.latitude, dropLocation?.latitude]);
+  if (!pickupLocation) return null;
+  return (
+    <MapView
+      ref={mapRef}
+      style={styles.routeMap}
+      initialRegion={{ latitude: pickupLocation.latitude, longitude: pickupLocation.longitude, latitudeDelta: 0.6, longitudeDelta: 0.6 }}
+      scrollEnabled={false}
+      zoomEnabled={false}
+      pitchEnabled={false}
+      rotateEnabled={false}
+    >
+      {coordinates.length > 1 ? <Polyline coordinates={coordinates} strokeColor={colors.primary} strokeWidth={4} /> : null}
+      <Marker coordinate={pickupLocation} title="Pickup" pinColor="green" />
+      {dropLocation ? <Marker coordinate={dropLocation} title="Drop" pinColor="red" /> : null}
+    </MapView>
+  );
+}
+
+function VehicleOption({ category, quote, loading, selected, onPress }) {
+  return (
+    <Pressable onPress={onPress} style={[styles.vehicleOption, selected && styles.vehicleOptionSelected]}>
+      <Image source={CATEGORY_ART[category.key] || img.sedan} style={styles.vehicleOptionImage} />
+      <View style={styles.flex}>
+        <Text style={styles.vehicleOptionName}>{category.name}</Text>
+        <Text style={styles.vehicleOptionMeta} numberOfLines={1}>{[category.seats, category.models].filter(Boolean).join(' · ')}</Text>
+        {quote?.fixedRoute ? <Text style={styles.vehicleOptionTag}>Fixed route price</Text> : null}
+      </View>
+      <View style={styles.vehicleOptionPriceBox}>
+        <Text style={[styles.vehicleOptionPrice, selected && styles.vehicleOptionPriceSelected]}>
+          {quote ? rupees(quote.total) : loading ? '…' : '—'}
+        </Text>
+        {quote ? <Text style={styles.vehicleOptionUnit}>all-inclusive</Text> : null}
+      </View>
+    </Pressable>
+  );
+}
+
+function BookScreen({ from, to, pickupLocation, dropLocation, tripType, carCategory, tripDate, returnDate, onFrom, onTo, onPickupLocation, onDropLocation, onSwap, onTripType, onCarCategory, onTripDate, onReturnDate, onSend, isSubmitting }) {
+  const pricing = usePricing();
+  const [pickerTarget, setPickerTarget] = useState(null);
+  const route = useRoadRoute(pickupLocation, dropLocation);
+  const quotes = useQuotes({ tripType, distanceKm: route.distanceKm, tripDate, returnDate, pickupLocation, dropLocation });
+  const selectedCategory = pricing.categories.find((category) => category.key === carCategory) || pricing.categories[0];
+  const fare = selectedCategory ? quotes.byKey[selectedCategory.key] : null;
+  const days = tripType === 'ROUND_TRIP' ? tripDaysBetween(tripDate, returnDate) : 1;
+
+  // A shortcut may pre-select a type the owner has since hidden: book what is shown.
+  useEffect(() => {
+    if (selectedCategory && selectedCategory.key !== carCategory) onCarCategory(selectedCategory.key);
+  }, [selectedCategory?.key, carCategory]);
+
+  // Keep the return after the pickup when the pickup moves.
+  useEffect(() => {
+    if (tripType === 'ROUND_TRIP' && returnDate <= tripDate) onReturnDate(new Date(tripDate.getTime() + 12 * 3600e3));
+  }, [tripType, tripDate.getTime()]);
 
   return (
     <View>
-      <View style={styles.centerIntro}>
-        <View style={styles.quoteBadge}><Sparkles color={colors.primary} size={14} /><Text style={styles.quoteBadgeText}>All-inclusive price · no hidden charges</Text></View>
-        <Text style={styles.bookTitle}>Book in <Text style={styles.yellowText}>60 seconds.</Text></Text>
-        <Text style={styles.bookSub}>Set your pins, pick a cab, see the final price.</Text>
+      <View style={styles.tripTabs}>
+        {TRIP_TABS.map((tab) => (
+          <Pressable key={tab.id} onPress={() => onTripType(tab.id)} style={[styles.tripTab, tripType === tab.id && styles.tripTabActive]}>
+            <Text style={[styles.tripTabText, tripType === tab.id && styles.tripTabTextActive]}>{tab.label}</Text>
+          </Pressable>
+        ))}
       </View>
 
       <CardGradient style={styles.bookingPanel}>
@@ -1195,45 +1322,86 @@ function BookScreen({ from, to, pickupLocation, dropLocation, service, carCatego
             <ArrowUpDown color={colors.primaryForeground} size={16} strokeWidth={2.5} />
           </Pressable>
         </View>
-        <SelectField icon={Car} label="Choose vehicle" value={carCategory} options={[
-          { value: 'sedan', label: 'Sedan · 4 seats' },
-          { value: 'suv', label: 'SUV · 6-7 seats' },
-          { value: 'traveller', label: 'Tempo · 12-26 seats' }
-        ]} onValue={onCarCategory} />
-        <SelectField icon={Sparkles} label="Trip type" value={service} options={['Drop Only', 'Round Trip', 'Wedding Car - Baraat / Bidai', 'Airport Transfer', 'Local City Ride']} onValue={onService} />
-        <TripTimePicker value={tripDate} onChange={onTripDate} />
-        <View style={styles.fareCard}>
-          <Text style={styles.fareLabel}>Route and fare</Text>
-          <Text style={styles.distanceValue}>{routeLoading ? 'Calculating road distance…' : routeDistanceKm !== null ? `${routeDistanceKm} km road distance` : service === 'Local City Ride' ? 'Local city ride · fixed price' : 'Set pickup and drop pins to see the distance'}</Text>
-          {routeError ? <Text style={styles.fareDisclaimer}>{routeError}</Text> : null}
-          {fare ? (
-            <>
-              <View style={styles.fareLines}>
-                <FareLine label={service === 'Local City Ride' ? 'Local ride fare' : `Base fare${service === 'Round Trip' ? ' (round trip)' : ''}`} value={fare.baseFare} />
-                {fare.driverAllowance ? <FareLine label="Driver allowance" value={fare.driverAllowance} /> : null}
-                {fare.tollAndParking ? <FareLine label="Toll & parking" value={fare.tollAndParking} /> : null}
-                <FareLine label={`GST (${fareConfig.gstPercent}%)`} value={fare.gst} />
-              </View>
-              <View style={styles.fareTotalRow}>
-                <View>
-                  <Text style={styles.fareTotalLabel}>Final payable</Text>
-                  <Text style={styles.fareTotalSub}>All-inclusive · no extra charges</Text>
-                </View>
-                <Text style={styles.fareTotalValue}>{rupees(fare.total)}</Text>
-              </View>
-            </>
-          ) : (
-            <Text style={styles.farePrice}>Final all-inclusive price appears once the road route is calculated.</Text>
-          )}
+
+        <RouteMap pickupLocation={pickupLocation} dropLocation={dropLocation} coordinates={route.coordinates} />
+        <View style={styles.routeSummary}>
+          <Text style={styles.routeSummaryText}>
+            {route.loading ? 'Finding the road route…'
+              : route.distanceKm != null ? `${route.distanceKm} km by road${route.durationSec ? ` · about ${formatDuration(route.durationSec)}` : ''}`
+                : 'Set pickup and drop to see the route'}
+          </Text>
+          {route.error ? <Text style={styles.fareDisclaimer}>{route.error}</Text> : null}
         </View>
-        <Pressable style={styles.whatsappButtonOuter} onPress={() => onSend(routeDistanceKm)} disabled={isSubmitting}>
-          <BrandGradient style={styles.whatsappButton}>
-            <MessageCircle color={colors.primaryForeground} size={21} strokeWidth={2.5} />
-            <Text style={styles.whatsappText}>{isSubmitting ? 'Requesting...' : fare ? `Request booking · ${rupees(fare.total)}` : 'Request booking'}</Text>
-          </BrandGradient>
-        </Pressable>
-        <Text style={styles.noHidden}>Price includes driver allowance, toll, parking & GST</Text>
+
+        <TripTimePicker value={tripDate} onChange={onTripDate} label="Pickup" />
+        {tripType === 'ROUND_TRIP' ? (
+          <>
+            <TripTimePicker
+              value={returnDate}
+              onChange={onReturnDate}
+              label="Return"
+              earliestTime={tripDate.getTime() + 60 * 60 * 1000}
+              dayCount={30}
+            />
+            <Text style={styles.roundTripNote}>{days} day{days > 1 ? 's' : ''} · the cab stays with you until you return</Text>
+          </>
+        ) : null}
       </CardGradient>
+
+      <SectionTitle eyebrow="Choose vehicle" title={tripType === 'LOCAL' ? 'Local ride prices' : 'Prices for this trip'} />
+      {quotes.error ? <Text style={styles.quoteError}>{quotes.error}</Text> : null}
+      <View style={styles.vehicleOptions}>
+        {pricing.categories.map((category) => (
+          <VehicleOption
+            key={category.key}
+            category={category}
+            quote={quotes.byKey[category.key]}
+            loading={quotes.loading || route.loading}
+            selected={category.key === selectedCategory?.key}
+            onPress={() => onCarCategory(category.key)}
+          />
+        ))}
+      </View>
+
+      {fare ? (
+        <View style={[styles.fareCard, styles.fareCardSpaced]}>
+          <Text style={styles.fareLabel}>{selectedCategory.name} · fare details</Text>
+          <View style={styles.fareLines}>
+            {fare.fixedRoute ? (
+              <FareLine label={`Fixed route price (${fare.fixedRoute})`} value={fare.baseFare} />
+            ) : (
+              <FareLine
+                label={tripType === 'LOCAL' ? 'Local ride fare' : tripType === 'ROUND_TRIP' ? `Round trip · ${fare.billedKm} km` : `Distance fare · ${fare.billedKm} km`}
+                value={fare.baseFare}
+              />
+            )}
+            {fare.driverAllowance ? <FareLine label={`Driver allowance${fare.days > 1 ? ` · ${fare.days} days` : ''}`} value={fare.driverAllowance} /> : null}
+            {fare.tollAndParking ? <FareLine label="Toll & parking" value={fare.tollAndParking} /> : null}
+            <FareLine label={`GST (${pricing.gstPercent}%)`} value={fare.gst} />
+          </View>
+          <View style={styles.fareTotalRow}>
+            <View>
+              <Text style={styles.fareTotalLabel}>Final payable</Text>
+              <Text style={styles.fareTotalSub}>All-inclusive · no extra charges</Text>
+            </View>
+            <Text style={styles.fareTotalValue}>{rupees(fare.total)}</Text>
+          </View>
+        </View>
+      ) : null}
+
+      <Pressable
+        style={[styles.whatsappButtonOuter, styles.requestButton]}
+        onPress={() => onSend(route.distanceKm, fare)}
+        disabled={isSubmitting}
+      >
+        <BrandGradient style={styles.whatsappButton}>
+          <Car color={colors.primaryForeground} size={21} strokeWidth={2.5} />
+          <Text style={styles.whatsappText}>
+            {isSubmitting ? 'Requesting…' : fare ? `Request ${selectedCategory.name} · ${rupees(fare.total)}` : 'Request booking'}
+          </Text>
+        </BrandGradient>
+      </Pressable>
+      <Text style={styles.noHidden}>SadakYatra confirms your booking, then a driver is assigned</Text>
 
       <LocationPicker
         visible={Boolean(pickerTarget)}
@@ -1249,11 +1417,11 @@ function BookScreen({ from, to, pickupLocation, dropLocation, service, carCatego
       />
 
       <SectionTitle eyebrow="Quick pick" title="Popular routes" />
-      {ROUTES.slice(0, 5).map((route) => (
-        <Pressable key={route.to} style={styles.routeButton} onPress={() => { onFrom(route.from); onTo(route.to); onPickupLocation(placePin(route.from)); onDropLocation(placePin(route.to)); }}>
+      {ROUTES.slice(0, 5).map((item) => (
+        <Pressable key={item.to} style={styles.routeButton} onPress={() => { onFrom(item.from); onTo(item.to); onPickupLocation(placePin(item.from)); onDropLocation(placePin(item.to)); }}>
           <View>
-            <Text style={styles.routeButtonMeta}>{route.from} to {route.to}</Text>
-            <Text style={styles.routeButtonFare}>Sedan ₹23/km · SUV ₹27/km · Tempo ₹35/km</Text>
+            <Text style={styles.routeButtonMeta}>{item.from} to {item.to}</Text>
+            <Text style={styles.routeButtonFare}>{rateSummary(pricing)}</Text>
           </View>
           <ArrowRight color={colors.mutedForeground} size={18} />
         </Pressable>
@@ -1295,6 +1463,7 @@ function AboutScreen({ lastTrip }) {
 }
 
 function BookingsScreen({ phone, bookings, loading, error, selectedBooking, tracking, events, onRefresh, onSelectBooking, onCancel, onBook, onBack }) {
+  const pricing = usePricing();
   if (selectedBooking) {
     const status = bookingStatus(selectedBooking);
     let fare = null;
@@ -1314,21 +1483,29 @@ function BookingsScreen({ phone, bookings, loading, error, selectedBooking, trac
             <View style={[styles.statusPill, styles[status.style]]}><Text style={styles.statusLabel}>{status.label}</Text></View>
           </View>
           <Text style={styles.bookingMeta}>
-            {formatFriendlyDate(new Date(selectedBooking.trip_datetime))} · {CATEGORY_NAMES[selectedBooking.car_category] || selectedBooking.car_category}
-            {selectedBooking.customer_note ? ` · ${selectedBooking.customer_note}` : ''}
+            {TRIP_TYPE_LABELS[selectedBooking.trip_type] || 'Trip'} · {formatFriendlyDate(new Date(selectedBooking.trip_datetime))} · {categoryLabel(pricing, selectedBooking.car_category)}
             {selectedBooking.route_distance_km ? ` · ${selectedBooking.route_distance_km} km` : ''}
           </Text>
+          {selectedBooking.return_datetime ? (
+            <Text style={styles.bookingMeta}>Return: {formatFriendlyDate(new Date(selectedBooking.return_datetime))} · {selectedBooking.trip_days} day{selectedBooking.trip_days > 1 ? 's' : ''}</Text>
+          ) : null}
+          {selectedBooking.status_reason && ['REJECTED', 'CANCELLED', 'ON_HOLD'].includes(selectedBooking.status) ? (
+            <Text style={styles.statusReason}>{selectedBooking.status_reason}</Text>
+          ) : null}
 
           {tracking && selectedBooking.status !== 'CANCELLED' ? <LiveCabCard tracking={tracking} /> : null}
-          {!tracking && selectedBooking.status === 'PENDING' ? (
-            <Text style={styles.emptySub}>We are sending your booking to the nearest available cab. Driver details appear here once accepted.</Text>
+          {['PENDING_APPROVAL', 'ON_HOLD'].includes(selectedBooking.status) ? (
+            <Text style={styles.emptySub}>SadakYatra is reviewing your booking. You will be notified once it is confirmed.</Text>
+          ) : null}
+          {['APPROVED', 'DRIVER_NOT_FOUND'].includes(selectedBooking.status) ? (
+            <Text style={styles.emptySub}>Confirmed by SadakYatra. We are assigning a driver; their name, phone and car number appear here.</Text>
           ) : null}
 
           {fare ? (
             <View style={styles.fareCard}>
               <Text style={styles.fareLabel}>Fare</Text>
               <View style={styles.fareLines}>
-                <FareLine label="Base fare" value={fare.baseFare} />
+                <FareLine label={fare.fixedRoute ? `Fixed route price (${fare.fixedRoute})` : fare.billedKm ? `Distance fare · ${fare.billedKm} km` : 'Base fare'} value={fare.baseFare} />
                 {fare.driverAllowance ? <FareLine label="Driver allowance" value={fare.driverAllowance} /> : null}
                 {fare.tollAndParking ? <FareLine label="Toll & parking" value={fare.tollAndParking} /> : null}
                 <FareLine label="GST" value={fare.gst} />
@@ -1390,7 +1567,7 @@ function BookingsScreen({ phone, bookings, loading, error, selectedBooking, trac
           <Pressable key={booking.id} style={styles.bookingRow} onPress={() => onSelectBooking(booking.id)}>
             <View style={styles.bookingSummary}>
               <Text style={styles.bookingLabel} numberOfLines={1}>{booking.pickup_text} → {booking.drop_text}</Text>
-              <Text style={styles.bookingMeta}>{formatFriendlyDate(new Date(booking.trip_datetime))} · {CATEGORY_NAMES[booking.car_category] || booking.car_category}</Text>
+              <Text style={styles.bookingMeta}>{formatFriendlyDate(new Date(booking.trip_datetime))} · {categoryLabel(pricing, booking.car_category)}{booking.trip_type === 'ROUND_TRIP' ? ' · Round trip' : ''}</Text>
               <Text style={styles.bookingDetail}>{booking.booking_ref}{booking.estimated_fare ? ` · ${rupees(booking.estimated_fare)}` : ''}</Text>
             </View>
             <View style={[styles.statusPill, styles[status.style]]}>
@@ -1482,7 +1659,7 @@ function LiveCabCard({ tracking }) {
           {etaMinutes != null ? <Text style={styles.liveCabEta}>{headingToDrop ? 'Drop' : 'Arrives'} in ~{etaMinutes} min</Text> : null}
         </View>
         <Text style={styles.liveCabDetail}>{tracking.driver_name || 'Driver'} · {tracking.plate_no || 'Cab number pending'}</Text>
-        <Text style={styles.liveCabMeta}>{[tracking.vehicle_model, tracking.car_category === 'traveller' ? 'Tempo Traveller' : tracking.car_category?.toUpperCase()].filter(Boolean).join(' · ')}</Text>
+        <Text style={styles.liveCabMeta}>{[tracking.vehicle_model, CATEGORY_NAMES[tracking.car_category] || tracking.car_category].filter(Boolean).join(' · ')}</Text>
         {!hasLocation && tracking.driver_status !== 'TRIP_COMPLETED' ? <Text style={styles.emptySub}>Live location appears when the driver is online.</Text> : null}
         {tracking.driver_phone ? (
           <Pressable style={styles.liveCabCall} onPress={() => Linking.openURL(`tel:${tracking.driver_phone}`)}>
@@ -1495,16 +1672,16 @@ function LiveCabCard({ tracking }) {
   );
 }
 
-function TripTimePicker({ value, onChange }) {
-  const days = Array.from({ length: 7 }, (_, index) => {
-    const day = new Date();
+function TripTimePicker({ value, onChange, label = 'Pickup', earliestTime, dayCount = 7 }) {
+  const earliest = earliestTime ?? Date.now() + 30 * 60 * 1000;
+  const days = Array.from({ length: dayCount }, (_, index) => {
+    const day = new Date(earliest);
     day.setHours(0, 0, 0, 0);
     day.setDate(day.getDate() + index);
     return day;
   });
   const selectedDay = new Date(value);
   selectedDay.setHours(0, 0, 0, 0);
-  const earliest = Date.now() + 30 * 60 * 1000;
   const slots = Array.from({ length: 48 }, (_, index) => {
     const slot = new Date(selectedDay);
     slot.setMinutes(index * 30);
@@ -1525,20 +1702,23 @@ function TripTimePicker({ value, onChange }) {
 
   return (
     <View style={styles.fieldBox}>
-      <View style={styles.fieldLabelRow}><Calendar color={colors.primary} size={14} /><Text style={styles.fieldLabel}>Pickup time · {formatFriendlyDate(value)}</Text></View>
+      <View style={styles.fieldLabelRow}><Calendar color={colors.primary} size={14} /><Text style={styles.fieldLabel}>{label} · {formatFriendlyDate(value)}</Text></View>
       <ScrollView horizontal showsHorizontalScrollIndicator={false} keyboardShouldPersistTaps="handled">
         {days.map((day, index) => {
           const active = day.getTime() === selectedDay.getTime();
-          const label = index === 0 ? 'Today' : index === 1 ? 'Tomorrow' : day.toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric' });
+          const today = new Date();
+          today.setHours(0, 0, 0, 0);
+          const offset = Math.round((day - today) / 86400000);
+          const dayLabel = offset === 0 ? 'Today' : offset === 1 ? 'Tomorrow' : day.toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short' });
           return (
             <Pressable key={day.toISOString()} style={[styles.selectPill, active && styles.selectPillActive]} onPress={() => pickDay(day)}>
-              <Text style={[styles.selectText, active && styles.selectTextActive]}>{label}</Text>
+              <Text style={[styles.selectText, active && styles.selectTextActive]}>{dayLabel}</Text>
             </Pressable>
           );
         })}
       </ScrollView>
       <ScrollView horizontal showsHorizontalScrollIndicator={false} keyboardShouldPersistTaps="handled">
-        {slots.length === 0 ? <Text style={styles.fareDisclaimer}>No more slots today — choose Tomorrow.</Text> : null}
+        {slots.length === 0 ? <Text style={styles.fareDisclaimer}>No more times on this day — choose the next day.</Text> : null}
         {slots.map((slot) => {
           const active = slot.getTime() === value.getTime();
           return (
@@ -1604,7 +1784,8 @@ function LocationPicker({ visible, title, value, initialLocation, onClose, onSel
     setSearching(true);
     setSearchError(null);
     try {
-      const url = `https://photon.komoot.io/api/?q=${encodeURIComponent(`${query.trim()}, Bihar, India`)}&lat=26.12&lon=85.39&limit=6`;
+      const near = selectedLocation || { latitude: 26.12, longitude: 85.39 };
+      const url = `https://photon.komoot.io/api/?q=${encodeURIComponent(`${query.trim()}, India`)}&lat=${near.latitude}&lon=${near.longitude}&limit=8`;
       const response = await fetch(url);
       if (!response.ok) throw new Error('Location search is temporarily unavailable.');
       const data = await response.json();
@@ -1749,12 +1930,13 @@ function SelectField({ icon: Icon, label, value, options, onValue }) {
 }
 
 function RouteRow({ route, onPress }) {
+  const pricing = usePricing();
   return (
     <Pressable style={styles.routeRow} onPress={onPress}>
       <View style={styles.clockIcon}><Clock color={colors.primary} size={18} /></View>
       <View style={styles.flex}>
         <Text style={styles.routeTitle}>{route.from} to {route.to}</Text>
-        <Text style={styles.routeMeta}>Sedan ₹23/km · SUV ₹27/km · Tempo ₹35/km</Text>
+        <Text style={styles.routeMeta}>{rateSummary(pricing)}</Text>
       </View>
       <ChevronRight color={colors.mutedForeground} size={18} />
     </Pressable>
@@ -1897,6 +2079,30 @@ const colors = {
 };
 
 const styles = StyleSheet.create({
+  tripTabs: { flexDirection: 'row', marginHorizontal: 16, marginTop: 16, padding: 4, borderRadius: 16, backgroundColor: '#1C1C1C', borderWidth: 1, borderColor: '#2E2E2E' },
+  tripTab: { flex: 1, minHeight: 44, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
+  tripTabActive: { backgroundColor: '#FFCC00' },
+  tripTabText: { color: '#B8B8B8', fontSize: 14, fontWeight: '800' },
+  tripTabTextActive: { color: '#0A0A0A', fontWeight: '900' },
+  routeMap: { height: 190, borderRadius: 14, marginTop: 12, overflow: 'hidden' },
+  routeSummary: { marginTop: 10, marginBottom: 4 },
+  routeSummaryText: { color: '#FFFFFF', fontSize: 14, fontWeight: '800' },
+  roundTripNote: { color: '#FFCC00', fontSize: 12, fontWeight: '700', marginTop: -4, marginBottom: 6 },
+  vehicleOptions: { marginHorizontal: 16, gap: 10 },
+  vehicleOption: { flexDirection: 'row', alignItems: 'center', gap: 12, padding: 12, borderRadius: 16, borderWidth: 1.5, borderColor: '#2E2E2E', backgroundColor: '#161616' },
+  vehicleOptionSelected: { borderColor: '#FFCC00', backgroundColor: 'rgba(255,204,0,0.08)' },
+  vehicleOptionImage: { width: 64, height: 44, borderRadius: 8 },
+  vehicleOptionName: { color: '#FFFFFF', fontSize: 16, fontWeight: '900' },
+  vehicleOptionMeta: { color: '#9A9A9A', fontSize: 12, marginTop: 2 },
+  vehicleOptionTag: { color: '#FFCC00', fontSize: 11, fontWeight: '800', marginTop: 3 },
+  vehicleOptionPriceBox: { alignItems: 'flex-end' },
+  vehicleOptionPrice: { color: '#FFFFFF', fontSize: 17, fontWeight: '900' },
+  vehicleOptionPriceSelected: { color: '#FFCC00' },
+  vehicleOptionUnit: { color: '#9A9A9A', fontSize: 10, marginTop: 2 },
+  fareCardSpaced: { marginHorizontal: 16, marginTop: 14 },
+  requestButton: { marginHorizontal: 16, marginTop: 16 },
+  quoteError: { color: '#F08080', fontSize: 13, marginHorizontal: 16, marginBottom: 8 },
+  statusReason: { color: '#F5A623', fontSize: 13, marginTop: 6 },
   screen: { flex: 1, backgroundColor: colors.bg },
   disabled: { opacity: 0.5 },
   rowCenterGap: { flexDirection: 'row', alignItems: 'center', gap: 8 },

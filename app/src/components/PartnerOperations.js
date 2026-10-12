@@ -1,11 +1,48 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Alert, Linking, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Alert, Linking, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import * as Location from 'expo-location';
 import MapView, { Marker } from 'react-native-maps';
 import { apiRequest } from '../api/client';
 import { CHANNELS, alertLocal, hasRemotePush } from '../notifications';
+import AdminPricing from './AdminPricing';
 
-const CATEGORY_LABELS = { sedan: 'Sedan', suv: 'SUV', traveller: 'Tempo Traveller' };
+const CATEGORY_LABELS = { hatchback: 'Hatchback', sedan: 'Sedan', suv: 'SUV', seven_seater: '7-Seater', traveller: 'Tempo Traveller' };
+// Names come from the Admin pricing screen once the app has loaded them.
+export function setCategoryNames(names) {
+  Object.assign(CATEGORY_LABELS, names);
+}
+const TRIP_TYPE_NAMES = { ONE_WAY: 'One-way', ROUND_TRIP: 'Round trip', LOCAL: 'Local ride' };
+const rupee = (value) => `₹${Math.round(value).toLocaleString('en-IN')}`;
+
+// Opens turn-by-turn directions in Google Maps (or Apple Maps on iPhone if chosen).
+function openDirections(lat, lng, label, apple = false) {
+  const destination = lat != null && lng != null ? `${lat},${lng}` : encodeURIComponent(label);
+  Linking.openURL(apple
+    ? `http://maps.apple.com/?daddr=${destination}`
+    : `https://www.google.com/maps/dir/?api=1&destination=${destination}&travelmode=driving`);
+}
+
+function NavigateButtons({ trip }) {
+  const toDrop = ['TRIP_STARTED'].includes(trip.driver_status);
+  const [lat, lng, label] = toDrop
+    ? [trip.drop_latitude, trip.drop_longitude, trip.drop_text]
+    : [trip.pickup_latitude, trip.pickup_longitude, trip.pickup_text];
+  return (
+    <View style={[styles.inlineRow, styles.offerActions]}>
+      <ActionButton label={toDrop ? 'Navigate to drop' : 'Navigate to pickup'} onPress={() => openDirections(lat, lng, label)} />
+      {Platform.OS === 'ios' ? <ActionButton label="Apple Maps" onPress={() => openDirections(lat, lng, label, true)} /> : null}
+    </View>
+  );
+}
+
+function TripTypeLine({ trip }) {
+  return (
+    <Text style={styles.itemText}>
+      {TRIP_TYPE_NAMES[trip.trip_type] || 'Trip'}
+      {trip.return_datetime ? ` · returns ${formatPickupTime(trip.return_datetime)} (${trip.trip_days} day${trip.trip_days > 1 ? 's' : ''})` : ''}
+    </Text>
+  );
+}
 const PERMISSION_LABELS = { bookings: 'Bookings', partners: 'Partners & fleet', pricing: 'Pricing' };
 
 function formatPickupTime(value) {
@@ -170,8 +207,9 @@ export function DriverDashboard() {
           <Text style={styles.itemText}>Pickup: {offer.pickup_text}</Text>
           <Text style={styles.itemText}>Drop: {offer.drop_text}</Text>
           <Text style={styles.itemText}>{formatPickupTime(offer.trip_datetime)} · {SERVICE_NAMES[offer.service_type] || offer.service_type} · {CATEGORY_LABELS[offer.car_category] || offer.car_category}</Text>
-          <Text style={styles.itemMeta}>{offer.route_distance_km ? `${offer.route_distance_km} km` : 'Local'}{offer.estimated_fare ? ` · Trip fare ₹${offer.estimated_fare}` : ''}</Text>
-          <Text style={styles.itemMeta}>The first driver to accept gets this booking.</Text>
+          <TripTypeLine trip={offer} />
+          <Text style={styles.itemMeta}>{offer.route_distance_km ? `${offer.route_distance_km} km` : 'Local ride'} · The first driver to accept gets this booking.</Text>
+          {offer.driver_payout ? <Text style={styles.payout}>You earn {rupee(offer.driver_payout)}</Text> : null}
           <View style={[styles.inlineRow, styles.offerActions]}>
             <ActionButton label="Accept" onPress={() => respond(offer.id, 'ACCEPT')} primary />
             <ActionButton label="Decline" onPress={() => respond(offer.id, 'REJECT')} />
@@ -187,9 +225,12 @@ export function DriverDashboard() {
           <Text style={styles.itemText}>Pickup: {trip.pickup_text}</Text>
           <Text style={styles.itemText}>Drop: {trip.drop_text}</Text>
           <Text style={styles.itemText}>{formatPickupTime(trip.trip_datetime)} · {CATEGORY_LABELS[trip.car_category] || trip.car_category}</Text>
+          <TripTypeLine trip={trip} />
+          {trip.driver_payout ? <Text style={styles.payout}>You earn {rupee(trip.driver_payout)}</Text> : null}
           <Pressable onPress={() => Linking.openURL(`tel:${trip.customer_phone}`)}>
             <Text style={styles.callLink}>Customer: {trip.customer_name || 'Customer'} · Call +91 {trip.customer_phone}</Text>
           </Pressable>
+          {trip.driver_status !== 'TRIP_COMPLETED' ? <NavigateButtons trip={trip} /> : null}
           {stages[trip.driver_status] ? (
             <View style={styles.offerActions}>
               <ActionButton label={stages[trip.driver_status].replaceAll('_', ' ')} onPress={() => advance(trip.id, stages[trip.driver_status])} primary />
@@ -241,6 +282,14 @@ export function AdminDashboard({ account }) {
   const canPartners = account.permissions.includes('partners');
   const canBookings = account.permissions.includes('bookings');
   const canAdmins = account.permissions.includes('admins');
+  const canPricing = account.permissions.includes('pricing');
+  const tabs = [
+    canBookings && ['bookings', 'Bookings'],
+    canPartners && ['partners', 'Partners'],
+    canPricing && ['pricing', 'Pricing'],
+    canAdmins && ['admins', 'Admins']
+  ].filter(Boolean);
+  const [tab, setTab] = useState(tabs[0]?.[0]);
   const [applications, setApplications] = useState([]);
   const [partners, setPartners] = useState([]);
   const [bookings, setBookings] = useState([]);
@@ -384,11 +433,22 @@ export function AdminDashboard({ account }) {
         </View>
         <ActionButton label="Refresh" onPress={() => load()} />
       </View>
+      <View style={styles.adminTabs}>
+        {tabs.map(([id, label]) => {
+          const badge = id === 'bookings' ? bookings.filter((booking) => booking.status === 'PENDING_APPROVAL').length
+            : id === 'partners' ? applications.length : 0;
+          return (
+            <Pressable key={id} onPress={() => { setTab(id); setMessage(''); }} style={[styles.adminTab, tab === id && styles.adminTabActive]}>
+              <Text style={[styles.adminTabText, tab === id && styles.adminTabTextActive]}>{label}{badge ? ` · ${badge}` : ''}</Text>
+            </Pressable>
+          );
+        })}
+      </View>
       {message ? <Text style={styles.message}>{message}</Text> : null}
 
-      {canPartners ? <Text style={styles.groupTitle}>Partner registrations · {applications.length}</Text> : null}
-      {canPartners && !applications.length ? <Text style={styles.itemMeta}>No new registrations.</Text> : null}
-      {applications.map((application) => (
+      {tab === 'partners' ? <Text style={styles.groupTitle}>Partner registrations · {applications.length}</Text> : null}
+      {tab === 'partners' && !applications.length ? <Text style={styles.itemMeta}>No new registrations.</Text> : null}
+      {tab === 'partners' && applications.map((application) => (
         <View key={application.id} style={styles.listItem}>
           <Text style={styles.itemTitle}>{application.application_ref} · {application.full_name}</Text>
           <Text style={styles.itemText}>{application.partner_type === 'vehicle_owner' ? 'Vehicle owner' : 'Driver'} · +91 {application.phone}{application.phone_verified ? ' ✓ OTP verified' : ''}</Text>
@@ -413,15 +473,16 @@ export function AdminDashboard({ account }) {
         </View>
       ))}
 
-      {canBookings ? <AdminBookings bookings={bookings} cabs={cabs} overview={overview} onAction={bookingAction} /> : null}
+      {tab === 'bookings' ? <AdminBookings bookings={bookings} cabs={cabs} overview={overview} onAction={bookingAction} /> : null}
+      {tab === 'pricing' ? <AdminPricing /> : null}
 
-      {canPartners && partners.length ? (
+      {tab === 'partners' && partners.length ? (
         <>
           <Text style={styles.groupTitle}>Fleet · {partners.filter((p) => p.is_online).length} online · {partners.filter((p) => p.current_booking_ref).length} on booking</Text>
           <FleetMap partners={partners} />
         </>
       ) : null}
-      {canPartners ? partners.map((partner) => {
+      {tab === 'partners' ? partners.map((partner) => {
         const busy = Boolean(partner.current_booking_ref);
         return (
           <View key={`${partner.vehicle_id}-${partner.driver_phone}`} style={styles.listItem}>
@@ -453,7 +514,7 @@ export function AdminDashboard({ account }) {
         );
       }) : null}
 
-      {canAdmins ? <AdminAccounts admins={admins} onChanged={() => load(true)} onMessage={setMessage} /> : null}
+      {tab === 'admins' ? <AdminAccounts admins={admins} onChanged={() => load(true)} onMessage={setMessage} /> : null}
     </View>
   );
 }
@@ -516,7 +577,9 @@ function AdminBookingCard({ booking, cabs, onAction }) {
     <View style={styles.listItem}>
       <Text style={styles.itemTitle}>{booking.booking_ref} · {ADMIN_STATUS[status] || status}{booking.status === 'CONFIRMED' && booking.driver_status ? ` · ${booking.driver_status.replaceAll('_', ' ')}` : ''}</Text>
       <Text style={styles.itemText}>{booking.pickup_text} → {booking.drop_text}</Text>
-      <Text style={styles.itemText}>{formatPickupTime(booking.trip_datetime)} · {CATEGORY_LABELS[booking.car_category] || booking.car_category}{booking.route_distance_km ? ` · ${booking.route_distance_km} km` : ''}{booking.estimated_fare ? ` · ₹${booking.estimated_fare}` : ''}</Text>
+      <Text style={styles.itemText}>{formatPickupTime(booking.trip_datetime)} · {CATEGORY_LABELS[booking.car_category] || booking.car_category}{booking.route_distance_km ? ` · ${booking.route_distance_km} km` : ''}</Text>
+      <TripTypeLine trip={booking} />
+      {booking.estimated_fare ? <Text style={styles.itemMeta}>Customer pays {rupee(booking.estimated_fare)}{booking.driver_payout ? ` · driver earns ${rupee(booking.driver_payout)}` : ''}</Text> : null}
       <Pressable onPress={() => Linking.openURL(`tel:${booking.customer_phone}`)}>
         <Text style={styles.callLink}>{booking.customer_name || 'Customer'} · Call +91 {booking.customer_phone}</Text>
       </Pressable>
@@ -733,6 +796,12 @@ const styles = StyleSheet.create({
   message: { color: palette.primary, fontSize: 11, lineHeight: 16, marginTop: 8 },
   callLink: { color: palette.primary, fontSize: 12, fontWeight: '800', marginTop: 6 },
   vehicleChoiceSub: { color: palette.muted, fontSize: 9, marginTop: 2 },
+  payout: { color: '#4CC157', fontSize: 15, fontWeight: '900', marginTop: 6 },
+  adminTabs: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 4, marginBottom: 6 },
+  adminTab: { paddingHorizontal: 14, paddingVertical: 9, borderRadius: 18, borderWidth: 1, borderColor: palette.border },
+  adminTabActive: { backgroundColor: palette.primary, borderColor: palette.primary },
+  adminTabText: { color: palette.text, fontSize: 13, fontWeight: '800' },
+  adminTabTextActive: { color: palette.primaryText, fontWeight: '900' },
   overviewRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 4, marginBottom: 6 },
   overviewTile: { minWidth: 92, flexGrow: 1, borderRadius: 12, borderWidth: 1, borderColor: palette.border, backgroundColor: palette.elevated, paddingVertical: 10, paddingHorizontal: 10 },
   overviewValue: { color: palette.primary, fontSize: 20, fontWeight: '900' },

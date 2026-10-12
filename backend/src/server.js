@@ -9,6 +9,7 @@ import {
   grantRole, isValidIndianPhone, loadAccount, loginWithPhone, normalizePhone, requestOtp, requireLogin, requireStaff
 } from './auth.js';
 import { CHANNELS, notifyStaff, notifyUsers } from './notify.js';
+import { clearPricingCache, loadPricing, publicPricing, quoteFor, tripDays } from './pricing.js';
 
 const app = express();
 // Express 4 does not catch rejected promises from async handlers.
@@ -20,42 +21,13 @@ app.use(cors());
 app.use(express.json());
 app.use(authenticate);
 
-const validCategories = new Set(['sedan', 'suv', 'traveller']);
 const validServiceTypes = new Set(['OUTSTATION', 'AIRPORT', 'WEDDING', 'LOCAL']);
-// Single source of truth for pricing. The app downloads this via /app/config
-// and falls back to an identical copy when the backend is unreachable.
-const fareConfig = {
-  categories: {
-    sedan: { perKm: 23, minimumFare: 1500, localFare: 1500 },
-    suv: { perKm: 27, minimumFare: 1500, localFare: 2000 },
-    traveller: { perKm: 35, minimumFare: 3500, localFare: 3500 }
-  },
-  roundTripMultiplier: 1.75,
-  driverAllowance: 300,
-  tollPerKm: 1.5,
-  gstPercent: 5
-};
 const gpsWebhookSecret = process.env.GPS_WEBHOOK_SECRET || '';
 const rateLimitHits = new Map();
 
-function calculateFareBreakdown(category, distanceKm, serviceType, roundTrip = false) {
-  const rate = fareConfig.categories[category];
-  if (!rate) return null;
-  const isLocal = serviceType === 'LOCAL';
-  if (!isLocal && (distanceKm == null || !Number.isFinite(distanceKm) || distanceKm <= 0)) return null;
-
-  const baseFare = isLocal
-    ? rate.localFare
-    : Math.round(Math.max(distanceKm * rate.perKm, rate.minimumFare) * (roundTrip ? fareConfig.roundTripMultiplier : 1));
-  const driverAllowance = isLocal ? 0 : fareConfig.driverAllowance;
-  const tollAndParking = isLocal ? 0 : Math.round(distanceKm * fareConfig.tollPerKm * (roundTrip ? 2 : 1));
-  const subtotal = baseFare + driverAllowance + tollAndParking;
-  const gst = Math.round((subtotal * fareConfig.gstPercent) / 100);
-  return { baseFare, driverAllowance, tollAndParking, gst, total: subtotal + gst };
-}
-
-function calculateFare(category, distanceKm, serviceType, roundTrip = false) {
-  return calculateFareBreakdown(category, distanceKm, serviceType, roundTrip)?.total ?? null;
+// Active vehicle type keys, from the Admin pricing screen.
+async function activeCategory(key) {
+  return (await loadPricing()).categories.find((item) => item.key === key && item.active) || null;
 }
 
 function publicBooking(booking) {
@@ -108,7 +80,6 @@ const appConfig = {
     location: 'Novel Nook Library, Ramdayalu Nagar, Muzaffarpur, Bihar'
   },
   services: ['OUTSTATION', 'AIRPORT', 'WEDDING', 'LOCAL'],
-  categories: ['sedan', 'suv', 'traveller'],
   routes: ['Muzaffarpur', 'Patna', 'Darbhanga', 'Sitamarhi', 'Motihari', 'Samastipur', 'Raxaul'],
   faqs: [
     {
@@ -128,8 +99,7 @@ const appConfig = {
     { name: 'Arvind Singh', rating: 5, text: 'Wedding car was decorated and arrived on time. Highly recommended.' },
     { name: 'Pooja Verma', rating: 5, text: 'Drop Only trip was smooth and driver was punctual and professional.' },
     { name: 'Ravi Thakur', rating: 5, text: 'Transparent rates, clean car, and safe experience.' }
-  ],
-  fareConfig
+  ]
 };
 
 app.get('/', (_req, res) => {
@@ -150,13 +120,12 @@ app.get('/health/db', async (_req, res) => {
   }
 });
 
-app.get('/app/config', (_req, res) => {
-  res.json(appConfig);
+// Brand, FAQs and current prices for the app.
+const sendConfig = handle(async (_req, res) => {
+  res.json({ ...appConfig, pricing: publicPricing(await loadPricing()) });
 });
-
-app.get('/config', (_req, res) => {
-  res.json(appConfig);
-});
+app.get('/app/config', sendConfig);
+app.get('/config', sendConfig);
 
 // ---- Login (mobile OTP) -------------------------------------------------
 const otpPhone = (req) => normalizePhone(req.body?.phone);
@@ -292,8 +261,8 @@ app.post('/partners/applications', requireLogin, rateLimit('partner-apply', 5, 6
   if (!/^[A-Z0-9 -]{6,20}$/.test(plate)) {
     return res.status(400).json({ error: 'Enter a valid vehicle registration number' });
   }
-  if (!validCategories.has(vehicleCategory)) {
-    return res.status(400).json({ error: 'Vehicle type must be sedan, suv, or traveller' });
+  if (!(await activeCategory(vehicleCategory))) {
+    return res.status(400).json({ error: 'Choose a vehicle type from the list' });
   }
   if (seats != null && (!Number.isInteger(Number(seats)) || Number(seats) < 1 || Number(seats) > 60)) {
     return res.status(400).json({ error: 'Seats must be between 1 and 60' });
@@ -345,37 +314,42 @@ app.post('/partners/applications', requireLogin, rateLimit('partner-apply', 5, 6
   });
 }));
 
-app.post('/pricing/estimate', (req, res) => {
-  const { category, distanceKm, serviceType = 'OUTSTATION', roundTrip = false } = req.body;
-  if (!category) return res.status(400).json({ error: 'category is required' });
-  if (!validCategories.has(category)) {
-    return res.status(400).json({ error: 'category must be sedan, suv, or traveller' });
-  }
-  if (!validServiceTypes.has(serviceType)) {
-    return res.status(400).json({ error: 'Invalid serviceType' });
-  }
-  if (typeof roundTrip !== 'boolean') {
-    return res.status(400).json({ error: 'roundTrip must be a boolean' });
-  }
+const TRIP_TYPES = new Set(['ONE_WAY', 'ROUND_TRIP', 'LOCAL']);
+const point = (lat, lng) => (lat != null && lng != null ? { latitude: Number(lat), longitude: Number(lng) } : null);
 
-  if (distanceKm == null && serviceType !== 'LOCAL') {
-    return res.status(400).json({ error: 'distanceKm is required for a rate-card estimate' });
+// Shared checks for quotes and bookings; returns an error message or the cleaned trip.
+function readTrip(body) {
+  const tripType = body.tripType || 'ONE_WAY';
+  if (!TRIP_TYPES.has(tripType)) return { error: 'tripType must be ONE_WAY, ROUND_TRIP or LOCAL' };
+  const distanceKm = body.distanceKm ?? body.routeDistanceKm;
+  const km = distanceKm == null ? null : Number(distanceKm);
+  if (km != null && (!Number.isFinite(km) || km < 0 || km > 5000)) return { error: 'Distance must be a positive number of km' };
+  if (tripType !== 'LOCAL' && !(km > 0)) return { error: 'Set both pins so the road distance can be calculated' };
+  const tripDatetime = body.tripDatetime || new Date().toISOString();
+  if (Number.isNaN(Date.parse(tripDatetime))) return { error: 'Choose a valid pickup date and time' };
+  let returnDatetime = null;
+  if (tripType === 'ROUND_TRIP') {
+    returnDatetime = body.returnDatetime;
+    if (!returnDatetime || Number.isNaN(Date.parse(returnDatetime))) return { error: 'Choose a return date and time for the round trip' };
+    if (new Date(returnDatetime) <= new Date(tripDatetime)) return { error: 'Return time must be after the pickup time' };
+    if (tripDays(tripDatetime, returnDatetime) > 30) return { error: 'Round trips can be at most 30 days' };
   }
+  const coordinates = [body.pickupLatitude, body.pickupLongitude, body.dropLatitude, body.dropLongitude];
+  if (coordinates.some((value) => value != null && !Number.isFinite(Number(value)))) return { error: 'Location coordinates must be numeric' };
+  return {
+    tripType, distanceKm: km, tripDatetime, returnDatetime,
+    pickup: point(body.pickupLatitude, body.pickupLongitude), drop: point(body.dropLatitude, body.dropLongitude)
+  };
+}
 
-  const parsedDistance = distanceKm == null ? null : Number(distanceKm);
-  if (parsedDistance != null && (!Number.isFinite(parsedDistance) || parsedDistance <= 0)) {
-    return res.status(400).json({ error: 'distanceKm must be a positive number' });
-  }
-  const breakdown = calculateFareBreakdown(category, parsedDistance, serviceType, roundTrip);
-  return res.json({
-    category,
-    distanceKm: parsedDistance,
-    serviceType,
-    roundTrip,
-    estimatedFare: breakdown?.total ?? null,
-    breakdown
-  });
-});
+// Prices for every active vehicle type for this trip, so the customer can compare.
+app.post('/pricing/quote', handle(async (req, res) => {
+  const trip = readTrip(req.body);
+  if (trip.error) return res.status(400).json({ error: trip.error });
+  const pricing = await loadPricing();
+  const quotes = publicPricing(pricing).categories.map((category) => ({ ...category, quote: quoteFor(pricing, category.key, trip) }));
+  res.json({ tripType: trip.tripType, days: tripDays(trip.tripDatetime, trip.returnDatetime), quotes, gstPercent: pricing.settings.gst_percent });
+}));
 
 // ---- Booking flow ---------------------------------------------------------
 // Customer requests -> admin approves -> eligible online drivers see it -> first to accept gets it.
@@ -396,7 +370,8 @@ const DRIVER_SEARCH_MINUTES = Number(process.env.DRIVER_SEARCH_MINUTES || 15);
 const DISPATCH_RADIUS_KM = Number(process.env.DISPATCH_RADIUS_KM || 80);
 // A cab cannot take two trips that start within this many hours of each other.
 const TRIP_GAP_SECONDS = Number(process.env.TRIP_GAP_HOURS || 4) * 3600;
-const CATEGORY_NAMES = { sedan: 'Sedan', suv: 'SUV', traveller: 'Tempo Traveller' };
+const TRIP_TYPE_NAMES = { ONE_WAY: 'One-way', ROUND_TRIP: 'Round trip', LOCAL: 'Local' };
+const categoryName = async (key) => (await loadPricing()).categories.find((item) => item.key === key)?.name || key;
 
 class BookingError extends Error {
   constructor(status, message, code = null) {
@@ -446,9 +421,10 @@ async function cabConflict(client, vehicleId, booking) {
   const clash = await one(`
     SELECT booking_ref FROM bookings
     WHERE vehicle_id = $1 AND id <> $2 AND status IN ('CONFIRMED','ONGOING')
-      AND abs(extract(epoch FROM (trip_datetime - $3::timestamptz))) < $4
+      AND trip_datetime < COALESCE($4::timestamptz, $3::timestamptz) + make_interval(secs => $5)
+      AND $3::timestamptz < COALESCE(return_datetime, trip_datetime) + make_interval(secs => $5)
     LIMIT 1
-  `, [vehicleId, booking.id, booking.trip_datetime, TRIP_GAP_SECONDS], client);
+  `, [vehicleId, booking.id, booking.trip_datetime, booking.return_datetime, TRIP_GAP_SECONDS], client);
   return clash?.booking_ref || null;
 }
 
@@ -476,9 +452,10 @@ async function eligibleCabs(booking, client) {
       AND NOT EXISTS (SELECT 1 FROM driver_status_events e WHERE e.booking_id = $2 AND e.driver_id = d.id AND e.status = 'BOOKING_REJECTED')
       AND NOT EXISTS (
         SELECT 1 FROM bookings o WHERE o.vehicle_id = v.id AND o.id <> $2 AND o.status IN ('CONFIRMED','ONGOING')
-          AND abs(extract(epoch FROM (o.trip_datetime - $3::timestamptz))) < $4
+          AND o.trip_datetime < COALESCE($4::timestamptz, $3::timestamptz) + make_interval(secs => $5)
+          AND $3::timestamptz < COALESCE(o.return_datetime, o.trip_datetime) + make_interval(secs => $5)
       )
-  `, [booking.car_category, booking.id, booking.trip_datetime, TRIP_GAP_SECONDS], client);
+  `, [booking.car_category, booking.id, booking.trip_datetime, booking.return_datetime, TRIP_GAP_SECONDS], client);
   return cabs.filter((cab) => inServiceArea(booking, cab));
 }
 
@@ -498,51 +475,27 @@ async function driverUserId(driverId) {
 }
 
 app.post('/bookings', requireLogin, handle(async (req, res) => {
-  const {
-    serviceType,
-    pickup,
-    drop,
-    pickupLatitude,
-    pickupLongitude,
-    dropLatitude,
-    dropLongitude,
-    routeDistanceKm,
-    tripDatetime,
-    carCategory,
-    roundTrip = false,
-    customerNote
-  } = req.body;
-
-  if (!serviceType || !pickup || !drop || !tripDatetime || !carCategory) {
+  const { serviceType, pickup, drop, carCategory, customerNote } = req.body;
+  if (!serviceType || !pickup || !drop || !req.body.tripDatetime || !carCategory) {
     return res.status(400).json({ error: 'serviceType, pickup, drop, tripDatetime, carCategory are required' });
   }
   if (!validServiceTypes.has(serviceType)) {
     return res.status(400).json({ error: 'serviceType must be OUTSTATION, AIRPORT, WEDDING, or LOCAL' });
   }
-  if (!validCategories.has(carCategory)) {
-    return res.status(400).json({ error: 'carCategory must be sedan, suv, or traveller' });
-  }
-  if (typeof roundTrip !== 'boolean') {
-    return res.status(400).json({ error: 'roundTrip must be a boolean' });
-  }
-  if (Number.isNaN(Date.parse(tripDatetime))) {
-    return res.status(400).json({ error: 'tripDatetime must be a valid date and time' });
-  }
-  const coordinates = [pickupLatitude, pickupLongitude, dropLatitude, dropLongitude];
-  if (coordinates.some((value) => value != null && !Number.isFinite(Number(value)))) {
-    return res.status(400).json({ error: 'Location coordinates must be numeric' });
-  }
-  if (routeDistanceKm != null && (!Number.isFinite(Number(routeDistanceKm)) || Number(routeDistanceKm) < 0)) {
-    return res.status(400).json({ error: 'routeDistanceKm must be a non-negative number' });
-  }
+  // Older app versions send roundTrip / LOCAL instead of tripType.
+  const trip = readTrip({
+    ...req.body,
+    tripType: req.body.tripType || (serviceType === 'LOCAL' ? 'LOCAL' : req.body.roundTrip ? 'ROUND_TRIP' : 'ONE_WAY')
+  });
+  if (trip.error) return res.status(400).json({ error: trip.error });
+  if (!(await activeCategory(carCategory))) return res.status(400).json({ error: 'This vehicle type is not available' });
+  const pricing = await loadPricing();
+  const fareBreakdown = quoteFor(pricing, carCategory, trip);
+  if (!fareBreakdown) return res.status(400).json({ error: 'Could not price this trip. Check the pickup and drop pins.' });
 
   const customer = req.account;
-  const fareBreakdown = calculateFareBreakdown(
-    carCategory,
-    routeDistanceKm == null ? null : Number(routeDistanceKm),
-    serviceType,
-    roundTrip
-  );
+  const { tripDatetime, distanceKm: routeDistanceKm } = trip;
+  const { pickupLatitude, pickupLongitude, dropLatitude, dropLongitude } = req.body;
 
   const trackingToken = randomBytes(32).toString('base64url');
   const trackingTokenHash = createHash('sha256').update(trackingToken).digest('hex');
@@ -551,14 +504,17 @@ app.post('/bookings', requireLogin, handle(async (req, res) => {
       INSERT INTO bookings (
         booking_ref, customer_id, service_type, pickup_text, drop_text,
         pickup_latitude, pickup_longitude, drop_latitude, drop_longitude, route_distance_km, tracking_token_hash,
-        trip_datetime, car_category, estimated_fare, fare_breakdown, customer_note, status
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, 'PENDING_APPROVAL')
+        trip_datetime, car_category, estimated_fare, fare_breakdown, customer_note, status,
+        trip_type, return_datetime, trip_days, driver_payout, commission_percent, fixed_route_id
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, 'PENDING_APPROVAL', $17, $18, $19, $20, $21, $22)
       RETURNING *
     `, [
-      `SY-${nano()}`, customer.id, serviceType, pickup, drop,
+      `SY-${nano()}`, customer.id, serviceType, String(pickup).slice(0, 300), String(drop).slice(0, 300),
       pickupLatitude ?? null, pickupLongitude ?? null, dropLatitude ?? null, dropLongitude ?? null,
       routeDistanceKm ?? null, trackingTokenHash, tripDatetime, carCategory,
-      fareBreakdown?.total ?? null, fareBreakdown ? JSON.stringify(fareBreakdown) : null, customerNote || null
+      fareBreakdown.total, JSON.stringify(fareBreakdown), customerNote ? String(customerNote).slice(0, 500) : null,
+      trip.tripType, trip.returnDatetime, fareBreakdown.days, fareBreakdown.driverPayout,
+      pricing.settings.commission_percent, fareBreakdown.fixedRouteId
     ], client);
     await recordStatus(client, created.id, null, 'PENDING_APPROVAL', customer.id, 'Booking requested');
     return created;
@@ -566,7 +522,7 @@ app.post('/bookings', requireLogin, handle(async (req, res) => {
 
   notifyStaff('bookings', {
     title: `New booking · ${booking.booking_ref}`,
-    body: `${customer.fullName || 'Customer'} (+91 ${customer.phone}) · ${tripLine(booking)} · ${CATEGORY_NAMES[carCategory]}`
+    body: `${customer.fullName || 'Customer'} (+91 ${customer.phone}) · ${TRIP_TYPE_NAMES[booking.trip_type]} · ${tripLine(booking)} · ${await categoryName(carCategory)}`
       + `${booking.estimated_fare ? ` · ₹${booking.estimated_fare}` : ''}`,
     data: { bookingId: booking.id }
   });
@@ -648,7 +604,7 @@ app.post('/admin/bookings/:id/approve', requireStaff('bookings'), handle(async (
   const cabs = await eligibleCabs(booking);
   notifyUsers(cabs.map((cab) => cab.user_id), {
     title: 'New booking available',
-    body: `${tripLine(booking)} · ${CATEGORY_NAMES[booking.car_category]}. First to accept gets it.`,
+    body: `${tripLine(booking)} · ${await categoryName(booking.car_category)}${booking.driver_payout ? ` · You earn ₹${booking.driver_payout}` : ''}. First to accept gets it.`,
     channel: CHANNELS.offers,
     data: { bookingId: booking.id }
   });
@@ -691,6 +647,130 @@ app.post('/admin/bookings/:id/cancel', requireStaff('bookings'), handle(async (r
     });
   }
   res.json({ booking: publicBooking(booking) });
+}));
+
+// ---- Admin: pricing ------------------------------------------------------
+const CATEGORY_NUMBERS = {
+  base_fare: [0, 100000], per_km: [1, 1000], min_fare: [0, 1000000], local_fare: [0, 1000000],
+  rt_per_km: [1, 1000], rt_min_km_per_day: [0, 2000], driver_allowance: [0, 100000], sort_order: [0, 10000]
+};
+const SETTING_NUMBERS = { toll_per_km: [0, 100], gst_percent: [0, 50], commission_percent: [0, 90] };
+const ROUTE_NUMBERS = {
+  origin_lat: [-90, 90], origin_lng: [-180, 180], dest_lat: [-90, 90], dest_lng: [-180, 180],
+  radius_km: [1, 100], one_way_fare: [1, 10000000], round_trip_fare: [1, 10000000]
+};
+
+// Picks the given number fields from body; throws a 400 for anything out of range.
+function readNumbers(body, spec, { required = false } = {}) {
+  const values = {};
+  for (const [field, [min, max]] of Object.entries(spec)) {
+    if (body[field] === undefined || body[field] === '') {
+      if (required) throw new BookingError(400, `${field.replaceAll('_', ' ')} is required`);
+      continue;
+    }
+    if (body[field] === null && field === 'round_trip_fare') { values[field] = null; continue; }
+    const value = Number(body[field]);
+    if (!Number.isFinite(value) || value < min || value > max) {
+      throw new BookingError(400, `${field.replaceAll('_', ' ')} must be between ${min} and ${max}`);
+    }
+    values[field] = value;
+  }
+  return values;
+}
+
+async function updateRow(table, keyColumn, key, values) {
+  const fields = Object.keys(values);
+  if (!fields.length) throw new BookingError(400, 'Nothing to update');
+  const row = await one(`
+    UPDATE ${table} SET ${fields.map((field, i) => `${field} = $${i + 2}`).join(', ')}
+    WHERE ${keyColumn} = $1 RETURNING *
+  `, [key, ...fields.map((field) => values[field])]);
+  clearPricingCache();
+  return row;
+}
+
+const textField = (value, max = 60) => (typeof value === 'string' ? value.trim().slice(0, max) : undefined);
+
+app.get('/admin/pricing', requireStaff('pricing'), handle(async (_req, res) => {
+  const [categories, settings, routes] = await Promise.all([
+    query('SELECT * FROM vehicle_categories ORDER BY sort_order, key'),
+    one('SELECT * FROM pricing_settings WHERE id = 1'),
+    query('SELECT * FROM fixed_routes ORDER BY active DESC, id')
+  ]);
+  res.json({ categories, settings, routes });
+}));
+
+app.put('/admin/pricing/categories/:key', requireStaff('pricing'), handle(async (req, res) => {
+  const values = readNumbers(req.body, CATEGORY_NUMBERS);
+  for (const field of ['name', 'seats_label', 'models']) {
+    const text = textField(req.body[field]);
+    if (text !== undefined) values[field] = text;
+  }
+  if (values.name !== undefined && values.name.length < 2) return res.status(400).json({ error: 'Name is required' });
+  if (typeof req.body.active === 'boolean') values.active = req.body.active;
+  values.updated_at = new Date();
+  const category = await updateRow('vehicle_categories', 'key', req.params.key, values);
+  if (!category) return res.status(404).json({ error: 'Vehicle type not found' });
+  res.json({ category });
+}));
+
+app.post('/admin/pricing/categories', requireStaff('pricing'), handle(async (req, res) => {
+  const name = textField(req.body.name) || '';
+  const key = name.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '').slice(0, 30);
+  if (key.length < 2) return res.status(400).json({ error: 'Enter a name for the vehicle type' });
+  const values = readNumbers(req.body, { per_km: CATEGORY_NUMBERS.per_km }, { required: true });
+  const extra = readNumbers(req.body, CATEGORY_NUMBERS);
+  try {
+    const category = await one(`
+      INSERT INTO vehicle_categories (key, name, seats_label, models, per_km, rt_per_km, min_fare, local_fare, rt_min_km_per_day, driver_allowance, base_fare, sort_order)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING *
+    `, [key, name, textField(req.body.seats_label) || '', textField(req.body.models) || '', values.per_km,
+      extra.rt_per_km ?? values.per_km, extra.min_fare ?? 0, extra.local_fare ?? 0, extra.rt_min_km_per_day ?? 250,
+      extra.driver_allowance ?? 300, extra.base_fare ?? 0, extra.sort_order ?? 100]);
+    clearPricingCache();
+    res.status(201).json({ category });
+  } catch (error) {
+    if (error.code === '23505') return res.status(409).json({ error: `A vehicle type called "${name}" already exists` });
+    throw error;
+  }
+}));
+
+app.put('/admin/pricing/settings', requireStaff('pricing'), handle(async (req, res) => {
+  const values = readNumbers(req.body, SETTING_NUMBERS);
+  values.updated_at = new Date();
+  res.json({ settings: await updateRow('pricing_settings', 'id', 1, values) });
+}));
+
+app.post('/admin/pricing/routes', requireStaff('pricing'), handle(async (req, res) => {
+  const { round_trip_fare: roundTripSpec, ...requiredSpec } = ROUTE_NUMBERS;
+  const values = readNumbers(req.body, requiredSpec, { required: true });
+  const { round_trip_fare: roundTripFare } = readNumbers(req.body, { round_trip_fare: roundTripSpec });
+  const originName = textField(req.body.origin_name, 80);
+  const destName = textField(req.body.dest_name, 80);
+  if (!originName || !destName) return res.status(400).json({ error: 'Enter both route ends' });
+  if (!(await activeCategory(req.body.category))) return res.status(400).json({ error: 'Choose an active vehicle type' });
+  const route = await one(`
+    INSERT INTO fixed_routes (origin_name, origin_lat, origin_lng, dest_name, dest_lat, dest_lng, radius_km, category, one_way_fare, round_trip_fare)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING *
+  `, [originName, values.origin_lat, values.origin_lng, destName, values.dest_lat, values.dest_lng, values.radius_km,
+    req.body.category, values.one_way_fare, roundTripFare ?? null]);
+  clearPricingCache();
+  res.status(201).json({ route });
+}));
+
+app.put('/admin/pricing/routes/:id', requireStaff('pricing'), handle(async (req, res) => {
+  const values = readNumbers(req.body, { one_way_fare: ROUTE_NUMBERS.one_way_fare, round_trip_fare: ROUTE_NUMBERS.round_trip_fare, radius_km: ROUTE_NUMBERS.radius_km });
+  if (typeof req.body.active === 'boolean') values.active = req.body.active;
+  const route = await updateRow('fixed_routes', 'id', Number(req.params.id), values);
+  if (!route) return res.status(404).json({ error: 'Route not found' });
+  res.json({ route });
+}));
+
+app.delete('/admin/pricing/routes/:id', requireStaff('pricing'), handle(async (req, res) => {
+  const removed = await one('DELETE FROM fixed_routes WHERE id = $1 RETURNING id', [Number(req.params.id)]);
+  clearPricingCache();
+  if (!removed) return res.status(404).json({ error: 'Route not found' });
+  res.json({ removed: true });
 }));
 
 // Cabs an admin can assign, for staff who manage bookings but not partners.
@@ -1005,7 +1085,9 @@ app.get('/driver/me', requireDriver, handle(async (req, res) => {
 }));
 
 // Drivers see the trip, not who booked it, until they accept.
-const offerView = ({ customer_id: _c, tracking_token_hash: _t, customer_note: _n, admin_note: _a, status_reason: _r, ...offer }) => offer;
+const offerView = ({ customer_id: _c, tracking_token_hash: _t, customer_note: _n, admin_note: _a, status_reason: _r, ...offer }) => driverView(offer);
+// Drivers see what they earn, not what the customer pays.
+const driverView = ({ estimated_fare: _f, fare_breakdown: _b, commission_percent: _p, tracking_token_hash: _t, ...trip }) => trip;
 
 // The driver's own trips, plus approved bookings they can still accept.
 app.get('/driver/bookings', requireDriver, handle(async (req, res) => {
@@ -1026,14 +1108,15 @@ app.get('/driver/bookings', requireDriver, handle(async (req, res) => {
         AND NOT EXISTS (SELECT 1 FROM driver_status_events e WHERE e.booking_id = b.id AND e.driver_id = $2 AND e.status = 'BOOKING_REJECTED')
         AND NOT EXISTS (
           SELECT 1 FROM bookings o WHERE o.vehicle_id = $3 AND o.id <> b.id AND o.status IN ('CONFIRMED','ONGOING')
-            AND abs(extract(epoch FROM (o.trip_datetime - b.trip_datetime))) < $4
+            AND o.trip_datetime < COALESCE(b.return_datetime, b.trip_datetime) + make_interval(secs => $4)
+            AND b.trip_datetime < COALESCE(o.return_datetime, o.trip_datetime) + make_interval(secs => $4)
         )
       ORDER BY b.trip_datetime ASC
     `, [cab.category, req.driver.id, cab.id, TRIP_GAP_SECONDS]))
       .filter((booking) => inServiceArea(booking, req.driver))
       .map(offerView);
   }
-  res.json({ bookings: bookings.map(publicBooking), offers });
+  res.json({ bookings: bookings.map(driverView), offers });
 }));
 
 app.patch('/driver/bookings/:id/response', requireDriver, handle(async (req, res) => {

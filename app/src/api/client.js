@@ -171,6 +171,10 @@ export function estimateFare(category, distanceKm, serviceType = 'OUTSTATION', r
     body: JSON.stringify({ category, distanceKm, serviceType, roundTrip })
   });
 }
+// All-inclusive prices for every vehicle type for one trip.
+export function getQuotes(trip) {
+  return request('/pricing/quote', { method: 'POST', skipAuth: true, body: JSON.stringify(trip) }, 15000);
+}
 export function createBooking(payload) {
   return request('/bookings', { method: 'POST', body: JSON.stringify(payload) });
 }
