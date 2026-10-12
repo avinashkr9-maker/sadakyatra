@@ -8,10 +8,21 @@
     "icon": "./assets/loveable/icon-512.png",
     "androidStatusBar": {
       "barStyle": "light-content",
-      "backgroundColor": "#07090D"
+      "backgroundColor": "#0A0A0A"
     },
     "android": {
-      "package": "com.sadakyatra.app"
+      "package": "com.sadakyatra.app",
+      "permissions": [
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_FINE_LOCATION",
+        "CAMERA",
+        "POST_NOTIFICATIONS",
+        "VIBRATE"
+      ],
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/loveable/icon-512.png",
+        "backgroundColor": "#0A0A0A"
+      }
     },
     "plugins": [
       "expo-status-bar",
@@ -28,7 +39,21 @@
           "photosPermission": "SadakYatra needs your photos to upload vehicle documents and car pictures.",
           "cameraPermission": "SadakYatra uses the camera to photograph vehicle documents."
         }
+      ],
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "SadakYatra uses your location to set the pickup point and, for drivers, to receive nearby bookings and show the route."
+        }
       ]
-    ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "3433374d-a997-4839-80c7-4d242f1fd44d"
+      }
+    },
+    "owner": "sadakyatra",
+    "userInterfaceStyle": "dark",
+    "backgroundColor": "#0A0A0A"
   }
 }
