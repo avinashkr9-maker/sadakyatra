@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
-import { Alert, Pressable, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
+import { Alert, Image, Pressable, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
 import { apiRequest } from '../api/client';
+import { pickPhoto } from '../pickPhoto';
 
 // Route ends the owner can pick for fixed prices (same pins the customer app uses).
 const PLACES = {
@@ -205,6 +206,125 @@ function FixedRoutes({ routes, categories, onSaved, onMessage }) {
   );
 }
 
+const WEDDING_FIELDS = [
+  ['price', 'Price per car ₹ (all-inclusive)'],
+  ['included_km', 'Included km'],
+  ['included_hours', 'Included hours'],
+  ['extra_km_rate', 'Extra ₹ per km'],
+  ['extra_hour_rate', 'Extra ₹ per hour']
+];
+
+function WeddingCarEditor({ car, categories, onSaved, onMessage }) {
+  const [open, setOpen] = useState(false);
+  const [draft, setDraft] = useState(() => ({
+    ...Object.fromEntries(WEDDING_FIELDS.map(([field]) => [field, asText(car[field])])),
+    name: car.name, category: car.category, fuel_policy: car.fuel_policy, decoration_options: car.decoration_options
+  }));
+  const update = (field, value) => setDraft((current) => ({ ...current, [field]: value }));
+  const activeTypes = categories.filter((category) => category.active).map((category) => [category.key, category.name]);
+
+  async function save(extra = {}) {
+    try {
+      await apiRequest(`/admin/wedding/vehicles/${car.id}`, 'PUT', {
+        ...toNumbers(draft, WEDDING_FIELDS), name: draft.name, category: draft.category,
+        fuel_policy: draft.fuel_policy, decoration_options: draft.decoration_options, ...extra
+      });
+      onMessage(`${draft.name} saved.`);
+      onSaved();
+    } catch (error) {
+      onMessage(error.message);
+    }
+  }
+
+  async function changePhoto() {
+    const file = await pickPhoto(`Photo of ${car.name}`);
+    if (!file) return;
+    try {
+      onMessage('Uploading photo…');
+      await apiRequest(`/admin/wedding/vehicles/${car.id}/image`, 'POST', { data: file.data, contentType: file.contentType });
+      onMessage(`Photo updated for ${car.name}.`);
+      onSaved();
+    } catch (error) {
+      onMessage(error.message || 'Could not upload the photo.');
+    }
+  }
+
+  return (
+    <View style={[styles.card, !car.active && styles.cardMuted]}>
+      <Pressable onPress={() => setOpen(!open)} style={styles.cardHeader}>
+        {car.image_url ? <Image source={{ uri: car.image_url }} style={styles.carThumb} /> : <View style={styles.carThumb} />}
+        <View style={styles.flex}>
+          <Text style={styles.cardTitle}>{car.name}{car.active ? '' : ' · hidden'}</Text>
+          <Text style={styles.meta}>₹{car.price} · {car.included_km} km / {car.included_hours} hrs</Text>
+        </View>
+        <Text style={styles.toggleText}>{open ? 'Close' : 'Edit'}</Text>
+      </Pressable>
+      {open ? (
+        <>
+          <Button label={car.image_url ? 'Change photo' : 'Add photo'} onPress={changePhoto} />
+          <TextInput value={draft.name} onChangeText={(value) => update('name', value)} placeholder="Car name" style={styles.input} placeholderTextColor={palette.muted} />
+          <Text style={styles.numberLabel}>Drivers with this vehicle type can take it</Text>
+          <Chips options={activeTypes} value={draft.category} onChange={(value) => update('category', value)} />
+          <View style={styles.grid}>
+            {WEDDING_FIELDS.map(([field, label]) => <NumberField key={field} label={label} value={draft[field]} onChange={(value) => update(field, value)} />)}
+          </View>
+          <Text style={styles.numberLabel}>Fuel policy</Text>
+          <TextInput value={draft.fuel_policy} onChangeText={(value) => update('fuel_policy', value)} style={styles.input} placeholderTextColor={palette.muted} />
+          <Text style={styles.numberLabel}>Decoration options (comma separated)</Text>
+          <TextInput value={draft.decoration_options} onChangeText={(value) => update('decoration_options', value)} placeholder="Simple flowers, Full floral decoration" style={styles.input} placeholderTextColor={palette.muted} />
+          <View style={styles.switchRow}>
+            <Text style={styles.meta}>Show to customers</Text>
+            <Switch value={car.active} onValueChange={(active) => save({ active })} trackColor={{ true: palette.primary }} />
+          </View>
+          <Button label={`Save ${draft.name}`} onPress={() => save()} primary />
+        </>
+      ) : null}
+    </View>
+  );
+}
+
+function WeddingCars({ categories, onMessage }) {
+  const [cars, setCars] = useState(null);
+  const [version, setVersion] = useState(0);
+  const [form, setForm] = useState({ name: '', category: 'sedan', price: '' });
+  const activeTypes = categories.filter((category) => category.active).map((category) => [category.key, category.name]);
+
+  async function load() {
+    try {
+      setCars((await apiRequest('/admin/wedding/vehicles')).vehicles);
+      setVersion((value) => value + 1);
+    } catch (error) {
+      onMessage(error.message);
+    }
+  }
+  useEffect(() => { load(); }, []);
+
+  async function add() {
+    try {
+      await apiRequest('/admin/wedding/vehicles', 'POST', { name: form.name, category: form.category, price: Number(form.price) });
+      onMessage(`${form.name} added. Open it to add a photo and package details.`);
+      setForm((current) => ({ ...current, name: '', price: '' }));
+      load();
+    } catch (error) {
+      onMessage(error.message);
+    }
+  }
+
+  if (!cars) return <Text style={styles.meta}>Loading wedding cars…</Text>;
+  return (
+    <>
+      {cars.map((car) => <WeddingCarEditor key={`${car.id}-${version}`} car={car} categories={categories} onSaved={load} onMessage={onMessage} />)}
+      <View style={styles.card}>
+        <Text style={styles.cardTitle}>Add a wedding car</Text>
+        <TextInput value={form.name} onChangeText={(value) => setForm((current) => ({ ...current, name: value }))} placeholder="e.g. Toyota Fortuner" style={styles.input} placeholderTextColor={palette.muted} />
+        <Chips options={activeTypes} value={form.category} onChange={(value) => setForm((current) => ({ ...current, category: value }))} />
+        <NumberField label="Price per car ₹" value={form.price} onChange={(value) => setForm((current) => ({ ...current, price: value }))} />
+        <Button label="Add wedding car" onPress={add} primary />
+      </View>
+    </>
+  );
+}
+
 export default function AdminPricing() {
   const [data, setData] = useState(null);
   const [settings, setSettings] = useState({});
@@ -257,17 +377,21 @@ export default function AdminPricing() {
 
       <Text style={styles.heading}>Fixed route prices</Text>
       <FixedRoutes routes={data.routes} categories={data.categories} onSaved={load} onMessage={setMessage} />
+
+      <Text style={styles.heading}>Wedding & baraat cars</Text>
+      <WeddingCars categories={data.categories} onMessage={setMessage} />
     </View>
   );
 }
 
-const palette = { surface: '#171613', elevated: '#211F1B', border: '#38342F', text: '#FAF8F5', muted: '#A7A39B', primary: '#F6CE00', primaryText: '#0E0D0B' };
+const palette = { surface: '#141414', elevated: '#1C1C1C', border: '#2E2E2E', text: '#FFFFFF', muted: '#9A9A9A', primary: '#FFCC00', primaryText: '#0A0A0A' };
 
 const styles = StyleSheet.create({
   flex: { flex: 1 },
   heading: { color: palette.text, fontSize: 15, fontWeight: '900', marginTop: 18, marginBottom: 6 },
   card: { borderRadius: 14, borderWidth: 1, borderColor: palette.border, backgroundColor: palette.elevated, padding: 12, marginTop: 10 },
   cardMuted: { opacity: 0.6 },
+  carThumb: { width: 56, height: 40, borderRadius: 8, backgroundColor: '#2E2E2E', marginRight: 4 },
   cardHeader: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   cardTitle: { color: palette.text, fontSize: 14, fontWeight: '900' },
   toggleText: { color: palette.primary, fontSize: 13, fontWeight: '800' },

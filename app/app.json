@@ -21,6 +21,13 @@
         {
           "color": "#FFCC00"
         }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "SadakYatra needs your photos to upload vehicle documents and car pictures.",
+          "cameraPermission": "SadakYatra uses the camera to photograph vehicle documents."
+        }
       ]
     ]
   }

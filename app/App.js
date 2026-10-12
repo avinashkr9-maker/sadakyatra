@@ -36,6 +36,8 @@ import {
   setBaseUrl,
   createBooking,
   getQuotes,
+  getWeddingVehicles,
+  createWeddingBooking,
   listBookings,
   getBooking,
   getBookingTracking,
@@ -108,7 +110,7 @@ function normalizePhone(value) {
 }
 
 const CATEGORY_NAMES = { hatchback: 'Hatchback', sedan: 'Sedan', suv: 'SUV', seven_seater: '7-Seater', traveller: 'Tempo Traveller' };
-const TRIP_TYPE_LABELS = { ONE_WAY: 'One-way', ROUND_TRIP: 'Round trip', LOCAL: 'Local ride' };
+const TRIP_TYPE_LABELS = { ONE_WAY: 'One-way', ROUND_TRIP: 'Round trip', LOCAL: 'Local ride', WEDDING: 'Wedding' };
 
 const BOOKING_STATUS = {
   PENDING_APPROVAL: { label: 'Awaiting approval', style: 'statusPending' },
@@ -546,6 +548,10 @@ function SadakYatraApp({ account, views, onSwitchView, onLogout, onJoinPartner }
 
   // Open the booking form already filled in for what the customer tapped.
   function startBooking(preset = {}) {
+    if (preset.service === 'Wedding Car - Baraat / Bidai') {
+      goTo('wedding');
+      return;
+    }
     if (preset.service && PRESET_SERVICES[preset.service]) {
       const [nextTripType, tag] = PRESET_SERVICES[preset.service];
       setTripType(nextTripType);
@@ -801,6 +807,7 @@ function SadakYatraApp({ account, views, onSwitchView, onLogout, onJoinPartner }
           />
         )}
         {tab === 'about' && <AboutScreen lastTrip={lastTrip} />}
+        {tab === 'wedding' && <WeddingScreen onBooked={() => { goTo('bookings'); fetchBookings(); }} />}
       </ScrollView>
       <BottomNav tab={tab} onTab={goTo} bottomInset={insets.bottom} />
       <Modal visible={menuVisible} transparent animationType="fade" onRequestClose={() => setMenuVisible(false)}>
@@ -817,6 +824,7 @@ function SadakYatraApp({ account, views, onSwitchView, onLogout, onJoinPartner }
               <Text style={styles.drawerEyebrow}>YOUR JOURNEY</Text>
               {[
                 { id: 'book', label: 'Book a cab', icon: Car },
+                { id: 'wedding', label: 'Wedding & baraat cars', icon: Heart },
                 { id: 'bookings', label: 'My trips', icon: Clock },
                 { id: 'fleet', label: 'Our fleet & rates', icon: Car },
                 { id: 'services', label: 'Services', icon: Sparkles },
@@ -1430,6 +1438,174 @@ function BookScreen({ from, to, pickupLocation, dropLocation, tripType, carCateg
   );
 }
 
+function defaultEventDate() {
+  const date = new Date(Date.now() + 86400000);
+  date.setHours(10, 0, 0, 0);
+  return date;
+}
+
+// Wedding & baraat cars: browse the catalog, then request one or more cars for the event.
+function WeddingScreen({ onBooked }) {
+  const [vehicles, setVehicles] = useState(null);
+  const [loadError, setLoadError] = useState(null);
+  const [selected, setSelected] = useState(null);
+  const [pickup, setPickup] = useState(null);
+  const [venue, setVenue] = useState(null);
+  const [pickerTarget, setPickerTarget] = useState(null);
+  const [eventDate, setEventDate] = useState(defaultEventDate);
+  const [withReturn, setWithReturn] = useState(false);
+  const [returnDate, setReturnDate] = useState(() => new Date(defaultEventDate().getTime() + 8 * 3600e3));
+  const [count, setCount] = useState(1);
+  const [decoration, setDecoration] = useState(null);
+  const [requirements, setRequirements] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    getWeddingVehicles()
+      .then((result) => setVehicles(result.vehicles || []))
+      .catch((error) => setLoadError(error.offline ? 'Wedding cars need internet. You can also ask us on WhatsApp.' : error.message));
+  }, []);
+
+  useEffect(() => {
+    if (withReturn && returnDate <= eventDate) setReturnDate(new Date(eventDate.getTime() + (selected?.includedHours || 8) * 3600e3));
+  }, [withReturn, eventDate.getTime()]);
+
+  function choose(vehicle) {
+    setSelected(vehicle);
+    setDecoration(vehicle.decorationOptions[0] || null);
+    setCount(1);
+  }
+
+  async function submit() {
+    if (!pickup || !venue) return Alert.alert('Add both places', 'Set where the car should report and the wedding venue.');
+    setSubmitting(true);
+    try {
+      const result = await createWeddingBooking({
+        weddingVehicleId: selected.id,
+        count,
+        pickup: pickup.label,
+        destination: venue.label,
+        pickupLatitude: pickup.latitude,
+        pickupLongitude: pickup.longitude,
+        dropLatitude: venue.latitude,
+        dropLongitude: venue.longitude,
+        eventDatetime: eventDate.toISOString(),
+        returnDatetime: withReturn ? returnDate.toISOString() : undefined,
+        decoration: decoration || undefined,
+        requirements: requirements.trim() || undefined
+      });
+      Alert.alert('Wedding booking requested', `${result.groupRef} · ${count} × ${selected.name} · ${rupees(result.total)}\nSadakYatra will confirm and assign the car${count > 1 ? 's' : ''}.`);
+      setSelected(null);
+      onBooked();
+    } catch (error) {
+      Alert.alert('Could not book', error.offline ? 'No internet. Please try again or book on WhatsApp.' : error.message);
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  if (!selected) {
+    return (
+      <View>
+        <SectionTitle eyebrow="Wedding & Baraat" title="Decorated cars for your big day" subtitle="Choose a car, then tell us the date and venue. Prices are per car." />
+        {loadError ? <Text style={styles.quoteError}>{loadError}</Text> : null}
+        {!vehicles && !loadError ? <Text style={styles.emptySub}>Loading wedding cars…</Text> : null}
+        {(vehicles || []).map((vehicle) => (
+          <Pressable key={vehicle.id} onPress={() => choose(vehicle)}>
+            <CardGradient style={styles.weddingCard}>
+              <Image source={vehicle.imageUrl ? { uri: vehicle.imageUrl } : img.wedding} style={styles.weddingImage} />
+              <View style={styles.weddingBody}>
+                <View style={styles.rowCenter}>
+                  <Text style={[styles.rideName, styles.flex]}>{vehicle.name}</Text>
+                  <Text style={styles.weddingPrice}>{rupees(vehicle.price)}</Text>
+                </View>
+                <Text style={styles.rideMeta}>{vehicle.includedKm} km · {vehicle.includedHours} hours included · per car</Text>
+                <Text style={styles.rideMeta}>{vehicle.fuelPolicy}</Text>
+                <Text style={styles.rideMeta}>Extra: ₹{vehicle.extraKmRate}/km · ₹{vehicle.extraHourRate}/hour</Text>
+                {vehicle.decorationOptions.length ? <Text style={styles.weddingDecor}>Decoration: {vehicle.decorationOptions.join(' · ')}</Text> : null}
+                <View style={styles.weddingChoose}><PrimaryButton label="Choose this car" onPress={() => choose(vehicle)} /></View>
+              </View>
+            </CardGradient>
+          </Pressable>
+        ))}
+        <WhatsAppButton label="Ask about a custom wedding package" message={`Hi ${BRAND.name}! I need wedding cars. Please share packages.`} />
+      </View>
+    );
+  }
+
+  return (
+    <View>
+      <Pressable style={styles.backLink} onPress={() => setSelected(null)}><Text style={styles.backLinkText}>← All wedding cars</Text></Pressable>
+      <CardGradient style={styles.bookingPanel}>
+        <View style={styles.rowCenter}>
+          <Image source={selected.imageUrl ? { uri: selected.imageUrl } : img.wedding} style={styles.vehicleOptionImage} />
+          <View style={styles.flex}>
+            <Text style={styles.rideName}>{selected.name}</Text>
+            <Text style={styles.rideMeta}>{rupees(selected.price)} per car · {selected.includedKm} km / {selected.includedHours} hrs</Text>
+          </View>
+        </View>
+        <PinField label="Car reports at" value={pickup?.label || ''} onPress={() => setPickerTarget('pickup')} />
+        <PinField label="Wedding venue" value={venue?.label || ''} onPress={() => setPickerTarget('venue')} />
+        <TripTimePicker value={eventDate} onChange={setEventDate} label="Reporting time" earliestTime={Date.now() + 60 * 60 * 1000} dayCount={60} />
+        <Pressable onPress={() => setWithReturn(!withReturn)} style={styles.weddingToggle}>
+          <Text style={styles.selectText}>{withReturn ? '☑' : '□'} Add return date & time (for bidai or multi-day)</Text>
+        </Pressable>
+        {withReturn ? <TripTimePicker value={returnDate} onChange={setReturnDate} label="Return" earliestTime={eventDate.getTime() + 60 * 60 * 1000} dayCount={30} /> : null}
+        <View style={styles.fieldBox}>
+          <Text style={styles.fieldLabel}>Number of cars</Text>
+          <View style={styles.stepper}>
+            <Pressable style={styles.stepperButton} onPress={() => setCount(Math.max(1, count - 1))}><Text style={styles.stepperText}>−</Text></Pressable>
+            <Text style={styles.stepperValue}>{count}</Text>
+            <Pressable style={styles.stepperButton} onPress={() => setCount(Math.min(10, count + 1))}><Text style={styles.stepperText}>+</Text></Pressable>
+          </View>
+        </View>
+        {selected.decorationOptions.length ? (
+          <View style={styles.fieldBox}>
+            <Text style={styles.fieldLabel}>Decoration</Text>
+            <View style={styles.chipWrap}>
+              {[...selected.decorationOptions, null].map((option) => (
+                <Pressable key={option || 'none'} onPress={() => setDecoration(option)} style={[styles.selectPill, decoration === option && styles.selectPillActive]}>
+                  <Text style={[styles.selectText, decoration === option && styles.selectTextActive]}>{option || 'No decoration'}</Text>
+                </Pressable>
+              ))}
+            </View>
+          </View>
+        ) : null}
+        <View style={styles.fieldBox}>
+          <Text style={styles.fieldLabel}>Other requirements (optional)</Text>
+          <TextInput value={requirements} onChangeText={setRequirements} placeholder="e.g. white ribbons, driver in uniform" placeholderTextColor={colors.placeholder} style={styles.fieldInput} multiline />
+        </View>
+        <View style={styles.fareTotalRow}>
+          <View>
+            <Text style={styles.fareTotalLabel}>{count} × {rupees(selected.price)}</Text>
+            <Text style={styles.fareTotalSub}>Extra km/hours charged as listed</Text>
+          </View>
+          <Text style={styles.fareTotalValue}>{rupees(selected.price * count)}</Text>
+        </View>
+      </CardGradient>
+      <Pressable style={[styles.whatsappButtonOuter, styles.requestButton]} onPress={submit} disabled={submitting}>
+        <BrandGradient style={styles.whatsappButton}>
+          <Heart color={colors.primaryForeground} size={20} strokeWidth={2.5} />
+          <Text style={styles.whatsappText}>{submitting ? 'Requesting…' : `Request ${count} car${count > 1 ? 's' : ''} · ${rupees(selected.price * count)}`}</Text>
+        </BrandGradient>
+      </Pressable>
+      <Text style={styles.noHidden}>SadakYatra confirms your booking, then assigns the car{count > 1 ? 's' : ''}</Text>
+      <LocationPicker
+        visible={Boolean(pickerTarget)}
+        title={pickerTarget === 'pickup' ? 'Where should the car report?' : 'Wedding venue'}
+        value={(pickerTarget === 'pickup' ? pickup : venue)?.label || ''}
+        initialLocation={pickerTarget === 'pickup' ? pickup : venue}
+        onClose={() => setPickerTarget(null)}
+        onSelect={(location) => {
+          if (pickerTarget === 'pickup') setPickup(location);
+          else setVenue(location);
+          setPickerTarget(null);
+        }}
+      />
+    </View>
+  );
+}
+
 function AboutScreen({ lastTrip }) {
   return (
     <View>
@@ -1483,10 +1659,12 @@ function BookingsScreen({ phone, bookings, loading, error, selectedBooking, trac
             <View style={[styles.statusPill, styles[status.style]]}><Text style={styles.statusLabel}>{status.label}</Text></View>
           </View>
           <Text style={styles.bookingMeta}>
-            {TRIP_TYPE_LABELS[selectedBooking.trip_type] || 'Trip'} · {formatFriendlyDate(new Date(selectedBooking.trip_datetime))} · {categoryLabel(pricing, selectedBooking.car_category)}
+            {selectedBooking.trip_type === 'WEDDING'
+              ? `Wedding · ${selectedBooking.wedding_vehicle_name || 'Wedding car'}${selectedBooking.group_size > 1 ? ` · car ${selectedBooking.group_index} of ${selectedBooking.group_size}` : ''}${selectedBooking.decoration ? ` · ${selectedBooking.decoration}` : ''}`
+              : TRIP_TYPE_LABELS[selectedBooking.trip_type] || 'Trip'} · {formatFriendlyDate(new Date(selectedBooking.trip_datetime))}{selectedBooking.trip_type === 'WEDDING' ? '' : ` · ${categoryLabel(pricing, selectedBooking.car_category)}`}
             {selectedBooking.route_distance_km ? ` · ${selectedBooking.route_distance_km} km` : ''}
           </Text>
-          {selectedBooking.return_datetime ? (
+          {selectedBooking.return_datetime && selectedBooking.trip_type !== 'WEDDING' ? (
             <Text style={styles.bookingMeta}>Return: {formatFriendlyDate(new Date(selectedBooking.return_datetime))} · {selectedBooking.trip_days} day{selectedBooking.trip_days > 1 ? 's' : ''}</Text>
           ) : null}
           {selectedBooking.status_reason && ['REJECTED', 'CANCELLED', 'ON_HOLD'].includes(selectedBooking.status) ? (
@@ -1505,7 +1683,7 @@ function BookingsScreen({ phone, bookings, loading, error, selectedBooking, trac
             <View style={styles.fareCard}>
               <Text style={styles.fareLabel}>Fare</Text>
               <View style={styles.fareLines}>
-                <FareLine label={fare.fixedRoute ? `Fixed route price (${fare.fixedRoute})` : fare.billedKm ? `Distance fare · ${fare.billedKm} km` : 'Base fare'} value={fare.baseFare} />
+                <FareLine label={fare.wedding ? `Wedding package · ${fare.includedKm} km / ${fare.includedHours} hrs` : fare.fixedRoute ? `Fixed route price (${fare.fixedRoute})` : fare.billedKm ? `Distance fare · ${fare.billedKm} km` : 'Base fare'} value={fare.baseFare} />
                 {fare.driverAllowance ? <FareLine label="Driver allowance" value={fare.driverAllowance} /> : null}
                 {fare.tollAndParking ? <FareLine label="Toll & parking" value={fare.tollAndParking} /> : null}
                 <FareLine label="GST" value={fare.gst} />
@@ -1567,7 +1745,7 @@ function BookingsScreen({ phone, bookings, loading, error, selectedBooking, trac
           <Pressable key={booking.id} style={styles.bookingRow} onPress={() => onSelectBooking(booking.id)}>
             <View style={styles.bookingSummary}>
               <Text style={styles.bookingLabel} numberOfLines={1}>{booking.pickup_text} → {booking.drop_text}</Text>
-              <Text style={styles.bookingMeta}>{formatFriendlyDate(new Date(booking.trip_datetime))} · {categoryLabel(pricing, booking.car_category)}{booking.trip_type === 'ROUND_TRIP' ? ' · Round trip' : ''}</Text>
+              <Text style={styles.bookingMeta}>{formatFriendlyDate(new Date(booking.trip_datetime))} · {categoryLabel(pricing, booking.car_category)}{booking.trip_type === 'ROUND_TRIP' ? ' · Round trip' : ''}{booking.wedding_vehicle_name ? ` · ${booking.wedding_vehicle_name}` : ''}</Text>
               <Text style={styles.bookingDetail}>{booking.booking_ref}{booking.estimated_fare ? ` · ${rupees(booking.estimated_fare)}` : ''}</Text>
             </View>
             <View style={[styles.statusPill, styles[status.style]]}>
@@ -2056,26 +2234,26 @@ function BottomNav({ tab, onTab, bottomInset }) {
 }
 
 const colors = {
-  bg: '#0E0D0B',
-  surface: '#171613',
-  surfaceElevated: '#211F1B',
-  card: '#1A1815',
-  cardEnd: '#13110F',
-  text: '#FAF8F5',
-  muted: '#9B9891',
-  mutedForeground: '#9B9891',
-  border: '#2B2825',
-  borderStrong: '#4B4742',
-  input: '#211F1B',
-  primary: '#F6CE00',
-  primaryGlow: '#FEE657',
-  primaryForeground: '#0E0D0B',
+  bg: '#0A0A0A',
+  surface: '#141414',
+  surfaceElevated: '#1C1C1C',
+  card: '#1C1C1C',
+  cardEnd: '#141414',
+  text: '#FFFFFF',
+  muted: '#9A9A9A',
+  mutedForeground: '#9A9A9A',
+  border: '#2E2E2E',
+  borderStrong: '#4A4A4A',
+  input: '#1C1C1C',
+  primary: '#FFCC00',
+  primaryGlow: '#FFD633',
+  primaryForeground: '#0A0A0A',
   destructive: '#F94144',
   success: '#4CC157',
   whatsapp: '#2EB45C',
-  placeholder: '#9B9891',
-  yellow: '#F6CE00',
-  black: '#0E0D0B'
+  placeholder: '#9A9A9A',
+  yellow: '#FFCC00',
+  black: '#0A0A0A'
 };
 
 const styles = StyleSheet.create({
@@ -2102,6 +2280,18 @@ const styles = StyleSheet.create({
   fareCardSpaced: { marginHorizontal: 16, marginTop: 14 },
   requestButton: { marginHorizontal: 16, marginTop: 16 },
   quoteError: { color: '#F08080', fontSize: 13, marginHorizontal: 16, marginBottom: 8 },
+  weddingCard: { marginHorizontal: 16, marginBottom: 14, borderRadius: 18, overflow: 'hidden', borderWidth: 1, borderColor: '#2E2E2E' },
+  weddingImage: { width: '100%', height: 170 },
+  weddingBody: { padding: 14 },
+  weddingPrice: { color: '#FFCC00', fontSize: 20, fontWeight: '900' },
+  weddingDecor: { color: '#FFFFFF', fontSize: 12, marginTop: 6 },
+  weddingChoose: { marginTop: 12, alignSelf: 'flex-start' },
+  weddingToggle: { paddingVertical: 10 },
+  stepper: { flexDirection: 'row', alignItems: 'center', gap: 18, marginTop: 6 },
+  stepperButton: { width: 44, height: 44, borderRadius: 22, backgroundColor: '#FFCC00', alignItems: 'center', justifyContent: 'center' },
+  stepperText: { color: '#0A0A0A', fontSize: 24, fontWeight: '900' },
+  stepperValue: { color: '#FFFFFF', fontSize: 22, fontWeight: '900', minWidth: 28, textAlign: 'center' },
+  chipWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 6 },
   statusReason: { color: '#F5A623', fontSize: 13, marginTop: 6 },
   screen: { flex: 1, backgroundColor: colors.bg },
   disabled: { opacity: 0.5 },
@@ -2150,7 +2340,7 @@ const styles = StyleSheet.create({
   drawerCloseText: { color: colors.text, fontSize: 25, lineHeight: 28 },
   drawerEyebrow: { color: colors.muted, fontSize: 10, fontWeight: '900', letterSpacing: 1.5, marginTop: 22, marginBottom: 8 },
   drawerItem: { minHeight: 54, flexDirection: 'row', alignItems: 'center', gap: 11, borderBottomWidth: 1, borderBottomColor: 'rgba(75,71,66,0.45)' },
-  drawerIcon: { width: 34, height: 34, borderRadius: 11, backgroundColor: 'rgba(246,206,0,0.12)', alignItems: 'center', justifyContent: 'center' },
+  drawerIcon: { width: 34, height: 34, borderRadius: 11, backgroundColor: 'rgba(255,204,0,0.12)', alignItems: 'center', justifyContent: 'center' },
   drawerItemText: { color: colors.text, flex: 1, fontSize: 14, fontWeight: '700' },
   drawerDivider: { height: 1, backgroundColor: colors.border, marginTop: 20 },
   drawerCall: { minHeight: 48, marginTop: 12, borderRadius: 14, backgroundColor: colors.primary, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 9 },
@@ -2161,7 +2351,7 @@ const styles = StyleSheet.create({
   heroCopy: { padding: 20 },
   eyebrow: { color: colors.muted, fontSize: 11, fontWeight: '800', textTransform: 'uppercase', letterSpacing: 2.2 },
   heroTitle: { color: colors.text, fontSize: 29, fontWeight: '900', marginTop: 4 },
-  pinPulse: { position: 'absolute', alignSelf: 'center', top: 162, width: 42, height: 42, borderRadius: 21, backgroundColor: 'rgba(246,206,0,0.24)', alignItems: 'center', justifyContent: 'center' },
+  pinPulse: { position: 'absolute', alignSelf: 'center', top: 162, width: 42, height: 42, borderRadius: 21, backgroundColor: 'rgba(255,204,0,0.24)', alignItems: 'center', justifyContent: 'center' },
   pinCore: { width: 20, height: 20, borderRadius: 10, borderWidth: 4, borderColor: colors.bg, alignItems: 'center', justifyContent: 'center' },
   pinDot: { width: 5, height: 5, borderRadius: 3, backgroundColor: colors.primaryForeground },
   whereCardOuter: {
@@ -2183,7 +2373,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 12
   },
-  iconBox: { width: 46, height: 46, borderRadius: 16, backgroundColor: 'rgba(246,206,0,0.15)', alignItems: 'center', justifyContent: 'center' },
+  iconBox: { width: 46, height: 46, borderRadius: 16, backgroundColor: 'rgba(255,204,0,0.15)', alignItems: 'center', justifyContent: 'center' },
   flex: { flex: 1 },
   whereEyebrow: { color: colors.primary, fontSize: 10, fontWeight: '900', textTransform: 'uppercase', letterSpacing: 1.1 },
   whereTitle: { color: colors.text, fontSize: 19, fontWeight: '900', marginTop: 1 },
@@ -2201,7 +2391,7 @@ const styles = StyleSheet.create({
   plus: { color: colors.yellow, fontSize: 24, fontWeight: '700' },
   pillRow: { paddingHorizontal: 16, gap: 8, paddingBottom: 2 },
   quickPill: { flexDirection: 'row', alignItems: 'center', gap: 10, borderRadius: 17, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface, paddingHorizontal: 12, paddingVertical: 10 },
-  smallIcon: { width: 32, height: 32, borderRadius: 12, backgroundColor: 'rgba(246,206,0,0.15)', alignItems: 'center', justifyContent: 'center' },
+  smallIcon: { width: 32, height: 32, borderRadius: 12, backgroundColor: 'rgba(255,204,0,0.15)', alignItems: 'center', justifyContent: 'center' },
   quickLabel: { color: colors.text, fontSize: 12, fontWeight: '800' },
   quickSub: { color: colors.muted, fontSize: 10, marginTop: 1 },
   sectionHeader: { paddingHorizontal: 16, marginTop: 28, marginBottom: 11, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-end' },
@@ -2229,7 +2419,7 @@ const styles = StyleSheet.create({
   rideName: { color: colors.text, fontSize: 14, fontWeight: '900' },
   rideMeta: { color: colors.muted, fontSize: 11, marginTop: 3 },
   rideFeature: { color: colors.muted, fontSize: 11, marginTop: 8 },
-  badge: { color: colors.primary, backgroundColor: 'rgba(246,206,0,0.20)', borderRadius: 999, overflow: 'hidden', paddingHorizontal: 7, paddingVertical: 2, fontSize: 9, fontWeight: '900' },
+  badge: { color: colors.primary, backgroundColor: 'rgba(255,204,0,0.20)', borderRadius: 999, overflow: 'hidden', paddingHorizontal: 7, paddingVertical: 2, fontSize: 9, fontWeight: '900' },
   priceBlock: { alignItems: 'flex-end' },
   priceText: { color: colors.text, fontSize: 15, fontWeight: '900' },
   priceUnit: { color: colors.muted, fontSize: 10, marginTop: 2 },
@@ -2298,7 +2488,7 @@ const styles = StyleSheet.create({
     borderRadius: 24,
     overflow: 'hidden',
     borderWidth: 1,
-    borderColor: 'rgba(246,206,0,0.30)',
+    borderColor: 'rgba(255,204,0,0.30)',
     padding: 20,
     shadowColor: '#000000',
     shadowOpacity: 0.45,
@@ -2306,9 +2496,9 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 8 },
     elevation: 8
   },
-  weddingGlow: { position: 'absolute', right: -24, top: -24, width: 128, height: 128, borderRadius: 64, backgroundColor: 'rgba(246,206,0,0.15)' },
+  weddingGlow: { position: 'absolute', right: -24, top: -24, width: 128, height: 128, borderRadius: 64, backgroundColor: 'rgba(255,204,0,0.15)' },
   weddingContent: { flex: 1, justifyContent: 'flex-start' },
-  weddingBadge: { alignSelf: 'flex-start', flexDirection: 'row', alignItems: 'center', gap: 4, borderRadius: 999, backgroundColor: 'rgba(246,206,0,0.15)', paddingHorizontal: 8, paddingVertical: 3 },
+  weddingBadge: { alignSelf: 'flex-start', flexDirection: 'row', alignItems: 'center', gap: 4, borderRadius: 999, backgroundColor: 'rgba(255,204,0,0.15)', paddingHorizontal: 8, paddingVertical: 3 },
   weddingLabel: { color: colors.primary, textTransform: 'uppercase', letterSpacing: 1.2, fontSize: 10, fontWeight: '900' },
   weddingTitle: { color: colors.text, fontSize: 21, fontWeight: '900', marginTop: 12, lineHeight: 27 },
   weddingSub: { color: colors.muted, fontSize: 12, marginTop: 5 },
@@ -2320,7 +2510,7 @@ const styles = StyleSheet.create({
   safetyTitle: { color: colors.text, fontSize: 14, fontWeight: '900' },
   safetySub: { color: colors.muted, fontSize: 11, marginTop: 3 },
   ratingCard: { borderRadius: 24, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface, padding: 16, flexDirection: 'row', alignItems: 'center', gap: 10 },
-  ratingPill: { flexDirection: 'row', alignItems: 'center', gap: 4, borderRadius: 999, backgroundColor: 'rgba(246,206,0,0.15)', paddingHorizontal: 10, paddingVertical: 5 },
+  ratingPill: { flexDirection: 'row', alignItems: 'center', gap: 4, borderRadius: 999, backgroundColor: 'rgba(255,204,0,0.15)', paddingHorizontal: 10, paddingVertical: 5 },
   ratingPillText: { color: colors.text, fontSize: 12, fontWeight: '900' },
   ratingText: { color: colors.muted, fontSize: 12, flex: 1 },
   readText: { color: colors.primary, fontSize: 12, fontWeight: '900' },
@@ -2355,7 +2545,7 @@ const styles = StyleSheet.create({
   phoneRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   phonePrefix: { color: colors.muted, fontSize: 14, fontWeight: '800', marginTop: 6 },
   swapButton: { position: 'absolute', right: 14, top: 58, width: 32, height: 32, borderRadius: 16, backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center', borderWidth: 3, borderColor: colors.bg },
-  currentLocationButton: { flexDirection: 'row', alignItems: 'center', gap: 8, alignSelf: 'flex-start', paddingVertical: 8, paddingHorizontal: 12, marginBottom: 8, borderRadius: 12, borderWidth: 1, borderColor: 'rgba(246,206,0,0.35)', backgroundColor: 'rgba(246,206,0,0.10)' },
+  currentLocationButton: { flexDirection: 'row', alignItems: 'center', gap: 8, alignSelf: 'flex-start', paddingVertical: 8, paddingHorizontal: 12, marginBottom: 8, borderRadius: 12, borderWidth: 1, borderColor: 'rgba(255,204,0,0.35)', backgroundColor: 'rgba(255,204,0,0.10)' },
   currentLocationText: { color: colors.primary, fontSize: 12, fontWeight: '800' },
   callSquareSmall: { width: 50, height: 50, borderRadius: 17, borderWidth: 1, borderColor: colors.borderStrong, alignItems: 'center', justifyContent: 'center' },
   serviceBook: { width: 96 },
@@ -2378,7 +2568,7 @@ const styles = StyleSheet.create({
   timelineContent: { flex: 1, gap: 4 },
   timelineTitle: { color: colors.text, fontSize: 12, fontWeight: '900' },
   timelineText: { color: colors.muted, fontSize: 12, lineHeight: 18 },
-  statusPending: { backgroundColor: 'rgba(246,206,0,0.16)' },
+  statusPending: { backgroundColor: 'rgba(255,204,0,0.16)' },
   statusConfirmed: { backgroundColor: 'rgba(76,193,87,0.16)' },
   statusOngoing: { backgroundColor: 'rgba(38,198,218,0.16)' },
   statusCompleted: { backgroundColor: 'rgba(76,193,87,0.12)' },
@@ -2411,7 +2601,7 @@ const styles = StyleSheet.create({
   serviceFooter: { marginTop: 20, flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'space-between', gap: 12 },
   servicePrice: { color: colors.yellow, fontSize: 21, fontWeight: '900' },
   centerIntro: { alignItems: 'center', paddingHorizontal: 16, paddingTop: 20 },
-  quoteBadge: { flexDirection: 'row', alignItems: 'center', gap: 6, borderWidth: 1, borderColor: 'rgba(246,206,0,0.30)', backgroundColor: 'rgba(246,206,0,0.10)', borderRadius: 999, paddingHorizontal: 12, paddingVertical: 6 },
+  quoteBadge: { flexDirection: 'row', alignItems: 'center', gap: 6, borderWidth: 1, borderColor: 'rgba(255,204,0,0.30)', backgroundColor: 'rgba(255,204,0,0.10)', borderRadius: 999, paddingHorizontal: 12, paddingVertical: 6 },
   quoteBadgeText: { color: colors.yellow, fontSize: 11, fontWeight: '800' },
   bookTitle: { color: colors.text, fontSize: 32, fontWeight: '900', marginTop: 12 },
   yellowText: { color: colors.yellow },
@@ -2442,7 +2632,7 @@ const styles = StyleSheet.create({
   selectText: { color: colors.muted, fontSize: 11, fontWeight: '800' },
   selectTextActive: { color: colors.black },
   twoCol: { flexDirection: 'row', gap: 10 },
-  fareCard: { borderRadius: 18, borderWidth: 1, borderColor: 'rgba(246,206,0,0.30)', backgroundColor: 'rgba(246,206,0,0.10)', padding: 12, marginBottom: 10 },
+  fareCard: { borderRadius: 18, borderWidth: 1, borderColor: 'rgba(255,204,0,0.30)', backgroundColor: 'rgba(255,204,0,0.10)', padding: 12, marginBottom: 10 },
   fareLabel: { color: colors.yellow, fontSize: 10, fontWeight: '900', textTransform: 'uppercase', letterSpacing: 1.2 },
   distanceValue: { color: colors.text, fontSize: 16, fontWeight: '900', marginTop: 8 },
   farePrice: { color: colors.yellow, fontSize: 14, fontWeight: '900', marginTop: 8 },
@@ -2451,7 +2641,7 @@ const styles = StyleSheet.create({
   fareLine: { flexDirection: 'row', justifyContent: 'space-between' },
   fareLineLabel: { color: colors.muted, fontSize: 12 },
   fareLineValue: { color: colors.text, fontSize: 12, fontWeight: '700' },
-  fareTotalRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 10, paddingTop: 10, borderTopWidth: 1, borderTopColor: 'rgba(246,206,0,0.30)' },
+  fareTotalRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 10, paddingTop: 10, borderTopWidth: 1, borderTopColor: 'rgba(255,204,0,0.30)' },
   fareTotalLabel: { color: colors.text, fontSize: 14, fontWeight: '900' },
   fareTotalSub: { color: colors.muted, fontSize: 10, fontWeight: '600', marginTop: 2 },
   fareTotalValue: { color: colors.yellow, fontSize: 24, fontWeight: '900' },

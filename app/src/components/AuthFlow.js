@@ -1,10 +1,11 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
-  ActivityIndicator, Image, KeyboardAvoidingView, Linking, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View
+  ActivityIndicator, Alert, Image, KeyboardAvoidingView, Linking, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Car, ChevronLeft, ChevronRight, Clock, Phone, ShieldCheck, User, Users } from 'lucide-react-native';
-import { getMe, requestOtp, submitPartnerApplication, updateMe, verifyOtp } from '../api/client';
+import { getMe, requestOtp, submitPartnerApplication, updateMe, uploadPartnerDocument, verifyOtp } from '../api/client';
+import { pickPhoto } from '../pickPhoto';
 
 const logo = require('../../assets/loveable/sadakyatra-logo.png');
 const SUPPORT_PHONE = '9304057169';
@@ -262,6 +263,8 @@ export function ProfileScreen({ account, onSaved }) {
 }
 
 // ---- 4. Partner registration ---------------------------------------------
+const DOCUMENT_TYPES = [['dl', 'Driving licence'], ['rc', 'Vehicle RC'], ['insurance', 'Vehicle insurance']];
+
 // "7 seats" / "12-26 seats" -> pre-fill the seats box with the first number.
 const defaultSeats = (category) => (String(category?.seats || '').match(/\d+/) || [''])[0];
 
@@ -273,7 +276,13 @@ export function PartnerSignupScreen({ account, categories = [], onSubmitted, onB
   });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [documents, setDocuments] = useState({});
   const update = (field, value) => setForm((current) => ({ ...current, [field]: value }));
+
+  async function addDocument(type, label) {
+    const file = await pickPhoto(label);
+    if (file) setDocuments((current) => ({ ...current, [type]: file }));
+  }
 
   if (!partnerType) {
     return (
@@ -298,7 +307,7 @@ export function PartnerSignupScreen({ account, categories = [], onSubmitted, onB
     setBusy(true);
     setError('');
     try {
-      await submitPartnerApplication({
+      const { application } = await submitPartnerApplication({
         partnerType,
         fullName: account.fullName,
         vehicleCategory: form.vehicleCategory,
@@ -310,6 +319,12 @@ export function PartnerSignupScreen({ account, categories = [], onSubmitted, onB
         driverName: ownerDrives ? account.fullName : form.driverName.trim(),
         driverPhone: ownerDrives ? account.phone : normalizePhone(form.driverPhone)
       });
+      // Documents are optional: a failed upload doesn't undo the registration.
+      const failed = [];
+      for (const [type, file] of Object.entries(documents)) {
+        await uploadPartnerDocument(application.id, type, file).catch(() => failed.push(DOCUMENT_TYPES.find(([key]) => key === type)[1]));
+      }
+      if (failed.length) Alert.alert('Registration submitted', `Could not upload: ${failed.join(', ')}. Our team will collect it when they call you.`);
       const me = await getMe();
       onSubmitted(me.account);
     } catch (err) {
@@ -354,7 +369,17 @@ export function PartnerSignupScreen({ account, categories = [], onSubmitted, onB
             ) : null}
           </>
         ) : null}
-        <Text style={styles.note}>Documents (DL, RC, insurance) are not needed right now. Our team may call you to verify your details.</Text>
+        <Text style={styles.fieldLabel}>Documents (optional)</Text>
+        {DOCUMENT_TYPES.map(([type, label]) => (
+          <Pressable key={type} onPress={() => addDocument(type, label)} style={styles.documentRow}>
+            {documents[type] ? <Image source={{ uri: documents[type].uri }} style={styles.documentThumb} /> : <View style={styles.documentThumb}><Text style={styles.documentPlus}>+</Text></View>}
+            <View style={styles.flex}>
+              <Text style={styles.documentLabel}>{label}</Text>
+              <Text style={styles.documentHint}>{documents[type] ? 'Added · tap to change' : 'Tap to take a photo'}</Text>
+            </View>
+          </Pressable>
+        ))}
+        <Text style={styles.note}>You can register without documents. Our team may call you to verify your details.</Text>
         <ErrorText>{error}</ErrorText>
         <Button label="Submit for verification" onPress={submit} busy={busy} />
       </View>
@@ -493,6 +518,11 @@ const styles = StyleSheet.create({
   checkboxOn: { backgroundColor: brand.yellow, borderColor: brand.black },
   checkMark: { color: brand.black, fontSize: 14, fontWeight: '900' },
   checkLabel: { color: brand.ink, fontSize: 14 },
+  documentRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: brand.line },
+  documentThumb: { width: 52, height: 40, borderRadius: 8, backgroundColor: '#F2F2F2', alignItems: 'center', justifyContent: 'center' },
+  documentPlus: { color: brand.inkMuted, fontSize: 22, fontWeight: '700' },
+  documentLabel: { color: brand.ink, fontSize: 14, fontWeight: '700' },
+  documentHint: { color: brand.inkMuted, fontSize: 12, marginTop: 2 },
   note: { color: brand.inkMuted, fontSize: 12, lineHeight: 17, marginBottom: 12 },
   statusIcon: { alignSelf: 'center', width: 80, height: 80, borderRadius: 40, backgroundColor: brand.surface, alignItems: 'center', justifyContent: 'center', marginBottom: 16 },
   shell: { flex: 1, backgroundColor: brand.black },

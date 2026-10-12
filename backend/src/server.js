@@ -3,7 +3,9 @@ import cors from 'cors';
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { customAlphabet } from 'nanoid';
 import { one, query, transaction } from './db.js';
-import { getPartnerDocumentsBucket, getSupabaseAdmin } from './supabase.js';
+import {
+  UploadError, WEDDING_CARS_BUCKET, getPartnerDocumentsBucket, getSupabaseAdmin, publicUrl, readUpload, signedUrl, uploadObject
+} from './supabase.js';
 import {
   OtpUnavailableError, STAFF_PERMISSIONS, authenticate, describeTestNumbers, checkOtp, createSession, endSession, findOrCreateUser,
   grantRole, isValidIndianPhone, loadAccount, loginWithPhone, normalizePhone, requestOtp, requireLogin, requireStaff
@@ -18,7 +20,7 @@ const port = process.env.PORT || 4000;
 const nano = customAlphabet('0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ', 8);
 
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '8mb' }));
 app.use(authenticate);
 
 const validServiceTypes = new Set(['OUTSTATION', 'AIRPORT', 'WEDDING', 'LOCAL']);
@@ -66,7 +68,10 @@ const requireDriver = handle(async (req, res, next) => {
   next();
 });
 
-const getBooking = (id) => one('SELECT * FROM bookings WHERE id = $1', [id]);
+const getBooking = (id) => one(`
+  SELECT b.*, (SELECT name FROM wedding_vehicles w WHERE w.id = b.wedding_vehicle_id) AS wedding_vehicle_name
+  FROM bookings b WHERE b.id = $1
+`, [id]);
 
 const appConfig = {
   brand: {
@@ -544,7 +549,10 @@ app.get('/bookings/:id', requireLogin, handle(async (req, res) => {
 }));
 
 app.get('/bookings', requireLogin, handle(async (req, res) => {
-  const bookings = await query('SELECT * FROM bookings WHERE customer_id = $1 ORDER BY created_at DESC', [req.account.id]);
+  const bookings = await query(`
+    SELECT b.*, (SELECT name FROM wedding_vehicles w WHERE w.id = b.wedding_vehicle_id) AS wedding_vehicle_name
+    FROM bookings b WHERE b.customer_id = $1 ORDER BY b.created_at DESC
+  `, [req.account.id]);
   res.json({ bookings: bookings.map(publicBooking) });
 }));
 
@@ -574,6 +582,7 @@ app.get('/admin/bookings', requireStaff('bookings'), handle(async (req, res) => 
   const rows = await query(`
     SELECT b.*, u.full_name AS customer_name, u.phone AS customer_phone,
       d.driver_name, d.phone AS driver_phone, v.cab_ref, v.plate_no, v.model AS vehicle_model,
+      (SELECT name FROM wedding_vehicles w WHERE w.id = b.wedding_vehicle_id) AS wedding_vehicle_name,
       (SELECT count(*) FROM driver_status_events e WHERE e.booking_id = b.id AND e.status = 'BOOKING_REJECTED')::int AS declined_count
     FROM bookings b
     JOIN users u ON u.id = b.customer_id
@@ -773,6 +782,181 @@ app.delete('/admin/pricing/routes/:id', requireStaff('pricing'), handle(async (r
   res.json({ removed: true });
 }));
 
+// ---- Partner documents (optional) ----------------------------------------
+const DOCUMENT_COLUMNS = { dl: 'dl_document_key', rc: 'rc_document_key', insurance: 'insurance_document_key' };
+
+// The applicant uploads a photo/PDF of their DL, RC or insurance while their registration is pending.
+app.post('/partners/applications/:id/documents', requireLogin, rateLimit('doc-upload', 20, 60 * 60_000, (req) => req.account.id), handle(async (req, res) => {
+  const column = DOCUMENT_COLUMNS[req.body.type];
+  if (!column) return res.status(400).json({ error: 'type must be dl, rc or insurance' });
+  const application = await one('SELECT * FROM partner_applications WHERE id = $1 AND applicant_user_id = $2', [Number(req.params.id), req.account.id]);
+  if (!application) return res.status(404).json({ error: 'Registration not found' });
+  if (application.status !== 'PENDING') return res.status(409).json({ error: 'Documents can be added only while the registration is pending' });
+  const file = readUpload(req.body.data, req.body.contentType);
+  const key = `partners/applications/${application.application_ref}/${req.body.type}.${file.extension}`;
+  await uploadObject(getPartnerDocumentsBucket(), key, file);
+  await query(`UPDATE partner_applications SET ${column} = $1 WHERE id = $2`, [key, application.id]);
+  res.status(201).json({ type: req.body.type, uploaded: true });
+}));
+
+// Admin: short-lived links to view a registration's documents.
+app.get('/admin/partners/applications/:id/documents', requireStaff('partners'), handle(async (req, res) => {
+  const application = await one('SELECT rc_document_key, dl_document_key, insurance_document_key FROM partner_applications WHERE id = $1', [Number(req.params.id)]);
+  if (!application) return res.status(404).json({ error: 'Registration not found' });
+  const documents = {};
+  for (const [type, column] of Object.entries(DOCUMENT_COLUMNS)) {
+    if (application[column]) documents[type] = await signedUrl(getPartnerDocumentsBucket(), application[column]);
+  }
+  res.json({ documents });
+}));
+
+// ---- Wedding & baraat cars -----------------------------------------------
+const WEDDING_NUMBERS = {
+  price: [1, 10000000], included_km: [0, 5000], included_hours: [1, 72],
+  extra_km_rate: [0, 10000], extra_hour_rate: [0, 100000], sort_order: [0, 10000]
+};
+
+const publicWeddingVehicle = (row) => ({
+  id: row.id,
+  name: row.name,
+  category: row.category,
+  imageUrl: row.image_url,
+  price: row.price,
+  includedKm: row.included_km,
+  includedHours: row.included_hours,
+  fuelPolicy: row.fuel_policy,
+  extraKmRate: row.extra_km_rate,
+  extraHourRate: row.extra_hour_rate,
+  decorationOptions: row.decoration_options.split(',').map((item) => item.trim()).filter(Boolean)
+});
+
+app.get('/wedding/vehicles', handle(async (_req, res) => {
+  const rows = await query('SELECT * FROM wedding_vehicles WHERE active ORDER BY sort_order, id');
+  res.json({ vehicles: rows.map(publicWeddingVehicle) });
+}));
+
+// One booking per car, linked by group_ref, so each car gets its own driver through the usual approval flow.
+app.post('/wedding/bookings', requireLogin, handle(async (req, res) => {
+  const { weddingVehicleId, pickup, destination, eventDatetime, returnDatetime, decoration, requirements } = req.body;
+  const count = req.body.count === undefined ? 1 : Number(req.body.count);
+  const vehicle = await one('SELECT * FROM wedding_vehicles WHERE id = $1 AND active', [Number(weddingVehicleId)]);
+  if (!vehicle) return res.status(400).json({ error: 'Choose a wedding car from the list' });
+  if (!Number.isInteger(count) || count < 1 || count > 10) return res.status(400).json({ error: 'Number of cars must be between 1 and 10' });
+  if (typeof pickup !== 'string' || pickup.trim().length < 2 || typeof destination !== 'string' || destination.trim().length < 2) {
+    return res.status(400).json({ error: 'Enter the pickup and the wedding venue' });
+  }
+  if (!eventDatetime || Number.isNaN(Date.parse(eventDatetime))) return res.status(400).json({ error: 'Choose the reporting date and time' });
+  if (new Date(eventDatetime) < new Date(Date.now() + 30 * 60_000)) return res.status(400).json({ error: 'Reporting time must be at least 30 minutes from now' });
+  if (returnDatetime && (Number.isNaN(Date.parse(returnDatetime)) || new Date(returnDatetime) <= new Date(eventDatetime))) {
+    return res.status(400).json({ error: 'Return time must be after the reporting time' });
+  }
+  const options = publicWeddingVehicle(vehicle).decorationOptions;
+  if (decoration && !options.includes(decoration)) return res.status(400).json({ error: 'Choose a decoration from the list' });
+  const coordinates = [req.body.pickupLatitude, req.body.pickupLongitude, req.body.dropLatitude, req.body.dropLongitude];
+  if (coordinates.some((value) => value != null && !Number.isFinite(Number(value)))) return res.status(400).json({ error: 'Location coordinates must be numeric' });
+
+  const pricing = await loadPricing();
+  const gstPercent = pricing.settings.gst_percent;
+  const total = Math.round(vehicle.price);
+  const gst = Math.round(total - total / (1 + gstPercent / 100));
+  const breakdown = {
+    tripType: 'WEDDING', wedding: true, baseFare: total - gst, driverAllowance: 0, tollAndParking: 0, gst, total, days: 1,
+    includedKm: vehicle.included_km, includedHours: vehicle.included_hours, fuelPolicy: vehicle.fuel_policy,
+    extraKmRate: vehicle.extra_km_rate, extraHourRate: vehicle.extra_hour_rate
+  };
+  const driverPayout = Math.round((total - gst) * (1 - pricing.settings.commission_percent / 100));
+  // The car is busy for the package hours unless a return time is given.
+  const busyUntil = returnDatetime || new Date(new Date(eventDatetime).getTime() + vehicle.included_hours * 3600e3).toISOString();
+  const groupRef = `SY-W-${nano()}`;
+  const note = String(requirements || '').trim().slice(0, 500) || null;
+
+  const bookings = await transaction(async (client) => {
+    const created = [];
+    for (let index = 1; index <= count; index++) {
+      const booking = await one(`
+        INSERT INTO bookings (
+          booking_ref, customer_id, service_type, pickup_text, drop_text,
+          pickup_latitude, pickup_longitude, drop_latitude, drop_longitude, tracking_token_hash,
+          trip_datetime, return_datetime, car_category, estimated_fare, fare_breakdown, customer_note, status,
+          trip_type, trip_days, driver_payout, commission_percent, wedding_vehicle_id, group_ref, group_index, group_size, decoration
+        ) VALUES ($1, $2, 'WEDDING', $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, 'PENDING_APPROVAL',
+          'WEDDING', 1, $16, $17, $18, $19, $20, $21, $22)
+        RETURNING *
+      `, [
+        count > 1 ? `${groupRef}-${index}` : groupRef, req.account.id, pickup.trim().slice(0, 300), destination.trim().slice(0, 300),
+        req.body.pickupLatitude ?? null, req.body.pickupLongitude ?? null, req.body.dropLatitude ?? null, req.body.dropLongitude ?? null,
+        createHash('sha256').update(randomBytes(32)).digest('hex'),
+        eventDatetime, busyUntil, vehicle.category, total, JSON.stringify(breakdown), note,
+        driverPayout, pricing.settings.commission_percent, vehicle.id, groupRef, index, count, decoration || null
+      ], client);
+      await recordStatus(client, booking.id, null, 'PENDING_APPROVAL', req.account.id, `Wedding car requested (${index} of ${count})`);
+      created.push(booking);
+    }
+    return created;
+  });
+
+  notifyStaff('bookings', {
+    title: `New wedding booking · ${groupRef}`,
+    body: `${req.account.fullName || 'Customer'} (+91 ${req.account.phone}) · ${count} × ${vehicle.name} · ${tripTime(eventDatetime)} · ₹${total * count}`,
+    data: { bookingId: bookings[0].id }
+  });
+  res.status(201).json({ groupRef, bookings: bookings.map(publicBooking), total: total * count });
+}));
+
+// ---- Admin: wedding cars -------------------------------------------------
+app.get('/admin/wedding/vehicles', requireStaff('pricing'), handle(async (_req, res) => {
+  res.json({ vehicles: await query('SELECT * FROM wedding_vehicles ORDER BY active DESC, sort_order, id') });
+}));
+
+function readWeddingText(body) {
+  const values = {};
+  for (const [field, max] of [['name', 80], ['fuel_policy', 200], ['decoration_options', 300]]) {
+    const text = textField(body[field], max);
+    if (text !== undefined) values[field] = text;
+  }
+  if (values.name !== undefined && values.name.length < 2) throw new BookingError(400, 'Enter the car name');
+  return values;
+}
+
+app.post('/admin/wedding/vehicles', requireStaff('pricing'), handle(async (req, res) => {
+  const numbers = readNumbers(req.body, WEDDING_NUMBERS);
+  const text = readWeddingText(req.body);
+  if (!text.name) return res.status(400).json({ error: 'Enter the car name' });
+  if (!numbers.price) return res.status(400).json({ error: 'Enter the price per car' });
+  if (!(await activeCategory(req.body.category))) return res.status(400).json({ error: 'Choose the vehicle type that drivers of this car have' });
+  const vehicle = await one(`
+    INSERT INTO wedding_vehicles (name, category, price, included_km, included_hours, fuel_policy, extra_km_rate, extra_hour_rate, decoration_options, sort_order)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING *
+  `, [text.name, req.body.category, numbers.price, numbers.included_km ?? 100, numbers.included_hours ?? 8,
+    text.fuel_policy || 'Fuel included for the package km', numbers.extra_km_rate ?? 0, numbers.extra_hour_rate ?? 0,
+    text.decoration_options || '', numbers.sort_order ?? 100]);
+  res.status(201).json({ vehicle });
+}));
+
+app.put('/admin/wedding/vehicles/:id', requireStaff('pricing'), handle(async (req, res) => {
+  const values = { ...readNumbers(req.body, WEDDING_NUMBERS), ...readWeddingText(req.body) };
+  if (req.body.category !== undefined) {
+    if (!(await activeCategory(req.body.category))) return res.status(400).json({ error: 'Choose an active vehicle type' });
+    values.category = req.body.category;
+  }
+  if (typeof req.body.active === 'boolean') values.active = req.body.active;
+  const vehicle = await updateRow('wedding_vehicles', 'id', Number(req.params.id), values);
+  if (!vehicle) return res.status(404).json({ error: 'Wedding car not found' });
+  res.json({ vehicle });
+}));
+
+app.post('/admin/wedding/vehicles/:id/image', requireStaff('pricing'), handle(async (req, res) => {
+  const vehicle = await one('SELECT id FROM wedding_vehicles WHERE id = $1', [Number(req.params.id)]);
+  if (!vehicle) return res.status(404).json({ error: 'Wedding car not found' });
+  const file = readUpload(req.body.data, req.body.contentType);
+  if (file.extension === 'pdf') return res.status(400).json({ error: 'Upload a photo of the car' });
+  // A new file name each time so phones don't keep showing the old cached photo.
+  const key = `cars/${vehicle.id}-${Date.now()}.${file.extension}`;
+  await uploadObject(WEDDING_CARS_BUCKET, key, file);
+  const updated = await one('UPDATE wedding_vehicles SET image_url = $1 WHERE id = $2 RETURNING *', [publicUrl(WEDDING_CARS_BUCKET, key), vehicle.id]);
+  res.json({ vehicle: updated });
+}));
+
 // Cabs an admin can assign, for staff who manage bookings but not partners.
 app.get('/admin/cabs', requireStaff('bookings'), handle(async (_req, res) => {
   const cabs = await query(`
@@ -845,11 +1029,11 @@ app.post('/admin/partners/applications/:id/approve', requireStaff('partners'), h
   const { phoneVerified } = req.body;
   // Documents are optional for now; blank fields are treated as not provided.
   const documentKey = (value) => (typeof value === 'string' && value.trim() ? value.trim() : null);
-  const rcDocumentKey = documentKey(req.body.rcDocumentKey);
-  const dlDocumentKey = documentKey(req.body.dlDocumentKey);
-  const insuranceDocumentKey = documentKey(req.body.insuranceDocumentKey);
   const application = await one('SELECT * FROM partner_applications WHERE id = $1', [id]);
   if (!application) return res.status(404).json({ error: 'Application not found' });
+  const rcDocumentKey = documentKey(req.body.rcDocumentKey) ?? application.rc_document_key;
+  const dlDocumentKey = documentKey(req.body.dlDocumentKey) ?? application.dl_document_key;
+  const insuranceDocumentKey = documentKey(req.body.insuranceDocumentKey) ?? application.insurance_document_key;
   if (application.status !== 'PENDING') {
     return res.status(409).json({ error: 'Only pending applications can be approved' });
   }
@@ -1092,7 +1276,8 @@ const driverView = ({ estimated_fare: _f, fare_breakdown: _b, commission_percent
 // The driver's own trips, plus approved bookings they can still accept.
 app.get('/driver/bookings', requireDriver, handle(async (req, res) => {
   const bookings = await query(`
-    SELECT b.*, v.plate_no, v.model AS vehicle_model, u.full_name AS customer_name, u.phone AS customer_phone
+    SELECT b.*, v.plate_no, v.model AS vehicle_model, u.full_name AS customer_name, u.phone AS customer_phone,
+      (SELECT name FROM wedding_vehicles w WHERE w.id = b.wedding_vehicle_id) AS wedding_vehicle_name
     FROM bookings b
     LEFT JOIN vehicles v ON v.id = b.vehicle_id
     JOIN users u ON u.id = b.customer_id
@@ -1103,7 +1288,8 @@ app.get('/driver/bookings', requireDriver, handle(async (req, res) => {
   let offers = [];
   if (req.driver.is_online && cab?.active) {
     offers = (await query(`
-      SELECT b.* FROM bookings b
+      SELECT b.*, (SELECT name FROM wedding_vehicles w WHERE w.id = b.wedding_vehicle_id) AS wedding_vehicle_name
+      FROM bookings b
       WHERE b.status = 'APPROVED' AND b.driver_id IS NULL AND b.car_category = $1
         AND NOT EXISTS (SELECT 1 FROM driver_status_events e WHERE e.booking_id = b.id AND e.driver_id = $2 AND e.status = 'BOOKING_REJECTED')
         AND NOT EXISTS (
@@ -1245,7 +1431,8 @@ app.get('/bookings/:id/tracking', handle(async (req, res) => {
 }));
 
 app.use((error, _req, res, _next) => {
-  if (error instanceof BookingError) return res.status(error.status).json({ error: error.message });
+  if (error instanceof BookingError || error instanceof UploadError) return res.status(error.status).json({ error: error.message });
+  if (error.type === 'entity.too.large') return res.status(413).json({ error: 'The file is too large' });
   console.error('Request failed', error);
   res.status(500).json({ error: 'Something went wrong. Please try again.' });
 });

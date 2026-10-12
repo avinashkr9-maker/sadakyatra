@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Alert, Linking, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Alert, Linking, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import * as Location from 'expo-location';
-import MapView, { Marker } from 'react-native-maps';
+import MapView, { Marker, Polyline } from 'react-native-maps';
 import { apiRequest } from '../api/client';
 import { CHANNELS, alertLocal, hasRemotePush } from '../notifications';
 import AdminPricing from './AdminPricing';
@@ -11,7 +11,7 @@ const CATEGORY_LABELS = { hatchback: 'Hatchback', sedan: 'Sedan', suv: 'SUV', se
 export function setCategoryNames(names) {
   Object.assign(CATEGORY_LABELS, names);
 }
-const TRIP_TYPE_NAMES = { ONE_WAY: 'One-way', ROUND_TRIP: 'Round trip', LOCAL: 'Local ride' };
+const TRIP_TYPE_NAMES = { ONE_WAY: 'One-way', ROUND_TRIP: 'Round trip', LOCAL: 'Local ride', WEDDING: 'Wedding' };
 const rupee = (value) => `₹${Math.round(value).toLocaleString('en-IN')}`;
 
 // Opens turn-by-turn directions in Google Maps (or Apple Maps on iPhone if chosen).
@@ -22,20 +22,125 @@ function openDirections(lat, lng, label, apple = false) {
     : `https://www.google.com/maps/dir/?api=1&destination=${destination}&travelmode=driving`);
 }
 
+function kmBetween(a, b) {
+  const toRad = (deg) => (deg * Math.PI) / 180;
+  const h = Math.sin(toRad(b.latitude - a.latitude) / 2) ** 2 +
+    Math.cos(toRad(a.latitude)) * Math.cos(toRad(b.latitude)) * Math.sin(toRad(b.longitude - a.longitude) / 2) ** 2;
+  return 6371 * 2 * Math.asin(Math.sqrt(h));
+}
+
+function formatEta(seconds) {
+  const minutes = Math.max(1, Math.round(seconds / 60));
+  return minutes < 60 ? `${minutes} min` : `${Math.floor(minutes / 60)} hr ${minutes % 60} min`;
+}
+
+// Full-screen map inside the app: driver's live position, the customer's pin and the road route between them.
+function DriverNavigation({ trip, onClose }) {
+  const toDrop = trip.driver_status === 'TRIP_STARTED';
+  const target = toDrop
+    ? { latitude: trip.drop_latitude, longitude: trip.drop_longitude, label: trip.drop_text }
+    : { latitude: trip.pickup_latitude, longitude: trip.pickup_longitude, label: trip.pickup_text };
+  const hasTarget = target.latitude != null && target.longitude != null;
+  const mapRef = useRef(null);
+  const lastRouteFrom = useRef(null);
+  const [me, setMe] = useState(null);
+  const [route, setRoute] = useState({ coordinates: [], km: null, seconds: null });
+  const [follow, setFollow] = useState(true);
+
+  // Follow the driver's GPS while this screen is open.
+  useEffect(() => {
+    let subscription;
+    Location.watchPositionAsync({ accuracy: Location.Accuracy.High, timeInterval: 4000, distanceInterval: 15 }, ({ coords }) => {
+      setMe({ latitude: coords.latitude, longitude: coords.longitude });
+    }).then((sub) => { subscription = sub; }).catch(() => {});
+    return () => subscription?.remove();
+  }, []);
+
+  // Re-plan the road route after the driver has moved a few hundred metres.
+  useEffect(() => {
+    if (!me || !hasTarget) return;
+    if (lastRouteFrom.current && kmBetween(lastRouteFrom.current, me) < 0.3) return;
+    lastRouteFrom.current = me;
+    const url = `https://router.project-osrm.org/route/v1/driving/${me.longitude},${me.latitude};${target.longitude},${target.latitude}?overview=full&geometries=geojson`;
+    fetch(url).then((response) => response.json()).then((result) => {
+      const best = result.routes?.[0];
+      if (!best) return;
+      setRoute({
+        coordinates: best.geometry.coordinates.map(([longitude, latitude]) => ({ latitude, longitude })),
+        km: Math.round((best.distance / 1000) * 10) / 10,
+        seconds: best.duration
+      });
+    }).catch(() => {});
+  }, [me?.latitude, me?.longitude]);
+
+  useEffect(() => {
+    if (follow && me) mapRef.current?.animateCamera({ center: me, zoom: 15 }, { duration: 600 });
+  }, [follow, me?.latitude, me?.longitude]);
+
+  function showWholeRoute() {
+    setFollow(false);
+    const points = [me, hasTarget ? target : null, ...route.coordinates].filter(Boolean);
+    if (points.length > 1) mapRef.current?.fitToCoordinates(points, { edgePadding: { top: 160, right: 60, bottom: 220, left: 60 }, animated: true });
+  }
+
+  const start = me || (hasTarget ? target : { latitude: 26.1209, longitude: 85.391 });
+  return (
+    <Modal visible animationType="slide" onRequestClose={onClose}>
+      <View style={styles.navScreen}>
+        <MapView
+          ref={mapRef}
+          style={styles.navMap}
+          initialRegion={{ ...start, latitudeDelta: 0.05, longitudeDelta: 0.05 }}
+          showsUserLocation
+          onPanDrag={() => setFollow(false)}
+        >
+          {route.coordinates.length > 1 ? <Polyline coordinates={route.coordinates} strokeColor={palette.primary} strokeWidth={6} /> : null}
+          {hasTarget ? <Marker coordinate={target} title={toDrop ? 'Drop' : 'Pickup'} description={target.label} pinColor={toDrop ? 'red' : 'green'} /> : null}
+        </MapView>
+        <View style={styles.navTopCard}>
+          <Text style={styles.navEyebrow}>{toDrop ? 'Drive to drop' : 'Drive to pickup'} · {trip.booking_ref}</Text>
+          <Text style={styles.navAddress} numberOfLines={2}>{target.label}</Text>
+          <Text style={styles.navEta}>
+            {!hasTarget ? 'The customer did not set a map pin for this place.'
+              : route.km != null ? `${route.km} km · ${formatEta(route.seconds)}`
+                : me ? 'Finding the road route…' : 'Getting your location…'}
+          </Text>
+        </View>
+        <View style={styles.navBottom}>
+          <View style={styles.inlineRow}>
+            <ActionButton label={follow ? 'Show whole route' : 'Follow me'} onPress={() => (follow ? showWholeRoute() : setFollow(true))} />
+            {trip.customer_phone ? <ActionButton label="Call customer" onPress={() => Linking.openURL(`tel:${trip.customer_phone}`)} /> : null}
+          </View>
+          <View style={styles.inlineRow}>
+            <ActionButton label="Voice directions (Google Maps)" onPress={() => openDirections(target.latitude, target.longitude, target.label)} />
+            <ActionButton label="Close" onPress={onClose} primary />
+          </View>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
 function NavigateButtons({ trip }) {
-  const toDrop = ['TRIP_STARTED'].includes(trip.driver_status);
-  const [lat, lng, label] = toDrop
-    ? [trip.drop_latitude, trip.drop_longitude, trip.drop_text]
-    : [trip.pickup_latitude, trip.pickup_longitude, trip.pickup_text];
+  const [open, setOpen] = useState(false);
+  const toDrop = trip.driver_status === 'TRIP_STARTED';
   return (
     <View style={[styles.inlineRow, styles.offerActions]}>
-      <ActionButton label={toDrop ? 'Navigate to drop' : 'Navigate to pickup'} onPress={() => openDirections(lat, lng, label)} />
-      {Platform.OS === 'ios' ? <ActionButton label="Apple Maps" onPress={() => openDirections(lat, lng, label, true)} /> : null}
+      <ActionButton label={toDrop ? 'Navigate to drop' : 'Navigate to pickup'} onPress={() => setOpen(true)} primary />
+      {open ? <DriverNavigation trip={trip} onClose={() => setOpen(false)} /> : null}
     </View>
   );
 }
 
 function TripTypeLine({ trip }) {
+  if (trip.trip_type === 'WEDDING') {
+    return (
+      <Text style={styles.itemText}>
+        Wedding · {trip.wedding_vehicle_name || 'Wedding car'}{trip.group_size > 1 ? ` · car ${trip.group_index} of ${trip.group_size}` : ''}
+        {trip.decoration ? ` · ${trip.decoration}` : ''}{trip.return_datetime ? ` · until ${formatPickupTime(trip.return_datetime)}` : ''}
+      </Text>
+    );
+  }
   return (
     <Text style={styles.itemText}>
       {TRIP_TYPE_NAMES[trip.trip_type] || 'Trip'}
@@ -230,6 +335,7 @@ export function DriverDashboard() {
           <Pressable onPress={() => Linking.openURL(`tel:${trip.customer_phone}`)}>
             <Text style={styles.callLink}>Customer: {trip.customer_name || 'Customer'} · Call +91 {trip.customer_phone}</Text>
           </Pressable>
+          {trip.customer_note ? <Text style={styles.itemMeta}>Customer note: {trip.customer_note}</Text> : null}
           {trip.driver_status !== 'TRIP_COMPLETED' ? <NavigateButtons trip={trip} /> : null}
           {stages[trip.driver_status] ? (
             <View style={styles.offerActions}>
@@ -297,7 +403,6 @@ export function AdminDashboard({ account }) {
   const [overview, setOverview] = useState(null);
   const [cabs, setCabs] = useState([]);
   const seenPending = useRef(null);
-  const [docs, setDocs] = useState({});
   const [verifiedPhones, setVerifiedPhones] = useState({});
   const [gpsDevices, setGpsDevices] = useState({});
   const [message, setMessage] = useState('');
@@ -364,20 +469,10 @@ export function AdminDashboard({ account }) {
     }
   }
 
-  function updateDoc(applicationId, field, value) {
-    setDocs((current) => ({
-      ...current,
-      [applicationId]: { rc: '', dl: '', insurance: '', ...current[applicationId], [field]: value }
-    }));
-  }
-
   async function approve(application) {
     try {
       const result = await apiRequest(`/admin/partners/applications/${application.id}/approve`, 'POST', {
         phoneVerified: verifiedPhones[application.id] === true,
-        rcDocumentKey: docs[application.id]?.rc,
-        dlDocumentKey: docs[application.id]?.dl,
-        insuranceDocumentKey: docs[application.id]?.insurance
       });
       setMessage(`${application.application_ref}: ${result.message}`);
       await load(true);
@@ -454,13 +549,7 @@ export function AdminDashboard({ account }) {
           <Text style={styles.itemText}>{application.partner_type === 'vehicle_owner' ? 'Vehicle owner' : 'Driver'} · +91 {application.phone}{application.phone_verified ? ' ✓ OTP verified' : ''}</Text>
           <Text style={styles.itemText}>{application.vehicle_number} · {CATEGORY_LABELS[application.vehicle_category] || application.vehicle_category} {application.vehicle_model}{application.seats ? ` · ${application.seats} seats` : ''}</Text>
           <Text style={styles.itemMeta}>{application.city}: {application.operating_area} · Driver {application.driver_name} (+91 {application.driver_phone})</Text>
-          {[
-            ['rc', 'RC document path (optional)'],
-            ['dl', 'DL document path (optional)'],
-            ['insurance', 'Insurance document path (optional)']
-          ].map(([field, label]) => (
-            <TextInput key={field} value={docs[application.id]?.[field] || ''} onChangeText={(value) => updateDoc(application.id, field, value)} placeholder={label} placeholderTextColor={palette.muted} autoCapitalize="none" style={styles.formInput} />
-          ))}
+          <ApplicationDocuments application={application} onMessage={setMessage} />
           {!application.phone_verified ? (
             <Pressable onPress={() => setVerifiedPhones((current) => ({ ...current, [application.id]: !current[application.id] }))} style={styles.verifyRow}>
               <Text style={styles.itemText}>{verifiedPhones[application.id] ? '☑' : '□'} Phone verified by admin</Text>
@@ -515,6 +604,27 @@ export function AdminDashboard({ account }) {
       }) : null}
 
       {tab === 'admins' ? <AdminAccounts admins={admins} onChanged={() => load(true)} onMessage={setMessage} /> : null}
+    </View>
+  );
+}
+
+// Buttons to open the documents a partner uploaded (links last 10 minutes).
+function ApplicationDocuments({ application, onMessage }) {
+  const uploaded = [['dl', 'Driving licence', application.dl_document_key], ['rc', 'RC', application.rc_document_key], ['insurance', 'Insurance', application.insurance_document_key]]
+    .filter(([, , key]) => key);
+  if (!uploaded.length) return <Text style={styles.itemMeta}>No documents uploaded (optional).</Text>;
+  async function open(type) {
+    try {
+      const { documents } = await apiRequest(`/admin/partners/applications/${application.id}/documents`);
+      if (documents[type]) Linking.openURL(documents[type]);
+      else onMessage('This document could not be opened.');
+    } catch (error) {
+      onMessage(error.message || 'Could not open the document.');
+    }
+  }
+  return (
+    <View style={[styles.badgeRow, styles.offerActions]}>
+      {uploaded.map(([type, label]) => <ActionButton key={type} label={`View ${label}`} onPress={() => open(type)} />)}
     </View>
   );
 }
@@ -734,14 +844,14 @@ function ActionButton({ label, onPress, primary = false, disabled = false }) {
 }
 
 const palette = {
-  bg: '#0E0D0B',
-  surface: '#171613',
-  elevated: '#211F1B',
-  border: '#38342F',
-  text: '#FAF8F5',
-  muted: '#A7A39B',
-  primary: '#F6CE00',
-  primaryText: '#0E0D0B',
+  bg: '#0A0A0A',
+  surface: '#141414',
+  elevated: '#1C1C1C',
+  border: '#2E2E2E',
+  text: '#FFFFFF',
+  muted: '#9A9A9A',
+  primary: '#FFCC00',
+  primaryText: '#0A0A0A',
   error: '#F08080'
 };
 
@@ -751,7 +861,7 @@ const styles = StyleSheet.create({
   subtitle: { color: palette.muted, fontSize: 12, marginTop: 4, marginBottom: 12 },
   modeRow: { flexDirection: 'row', gap: 8, marginBottom: 12 },
   modeButton: { flex: 1, minHeight: 42, borderRadius: 12, borderWidth: 1, borderColor: palette.border, alignItems: 'center', justifyContent: 'center' },
-  modeButtonActive: { borderColor: palette.primary, backgroundColor: 'rgba(246,206,0,0.12)' },
+  modeButtonActive: { borderColor: palette.primary, backgroundColor: 'rgba(255,204,0,0.12)' },
   modeText: { color: palette.muted, fontSize: 13, fontWeight: '800' },
   modeTextActive: { color: palette.primary },
   disclosure: { color: palette.muted, fontSize: 11, lineHeight: 16, marginBottom: 10 },
@@ -770,17 +880,17 @@ const styles = StyleSheet.create({
   verifyRow: { paddingVertical: 8 },
   vehicleChoices: { marginVertical: 8 },
   vehicleChoice: { maxWidth: 220, minHeight: 40, marginRight: 8, paddingHorizontal: 10, justifyContent: 'center', borderRadius: 10, borderWidth: 1, borderColor: palette.border },
-  vehicleChoiceActive: { borderColor: palette.primary, backgroundColor: 'rgba(246,206,0,0.12)' },
+  vehicleChoiceActive: { borderColor: palette.primary, backgroundColor: 'rgba(255,204,0,0.12)' },
   vehicleChoiceText: { color: palette.text, fontSize: 10, fontWeight: '700' },
   fleetMap: { height: 220, marginTop: 8, marginBottom: 4, borderRadius: 12 },
   groupTitle: { color: palette.text, fontSize: 13, fontWeight: '900', marginTop: 14 },
   badgeRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 6 },
   badge: { fontSize: 9, fontWeight: '900', paddingHorizontal: 7, paddingVertical: 3, borderRadius: 6, overflow: 'hidden' },
-  badgeOnline: { color: '#0E0D0B', backgroundColor: '#4CC157' },
+  badgeOnline: { color: '#0A0A0A', backgroundColor: '#4CC157' },
   badgeOffline: { color: palette.text, backgroundColor: palette.border },
-  badgeBusy: { color: '#0E0D0B', backgroundColor: '#F5A623' },
-  badgeFree: { color: '#0E0D0B', backgroundColor: palette.primary },
-  offerCard: { borderWidth: 1, borderColor: palette.primary, borderRadius: 12, paddingHorizontal: 10, marginTop: 8, backgroundColor: 'rgba(246,206,0,0.08)' },
+  badgeBusy: { color: '#0A0A0A', backgroundColor: '#F5A623' },
+  badgeFree: { color: '#0A0A0A', backgroundColor: palette.primary },
+  offerCard: { borderWidth: 1, borderColor: palette.primary, borderRadius: 12, paddingHorizontal: 10, marginTop: 8, backgroundColor: 'rgba(255,204,0,0.08)' },
   offerLabel: { color: palette.primary, fontSize: 13, fontWeight: '900', marginBottom: 2 },
   offerActions: { marginTop: 8 },
   flex: { flex: 1 },
@@ -789,13 +899,20 @@ const styles = StyleSheet.create({
   onlineToggleOn: { backgroundColor: '#4CC157', borderColor: '#4CC157' },
   onlineToggleOff: { backgroundColor: palette.elevated, borderColor: palette.border },
   onlineToggleTitle: { color: palette.text, fontSize: 15, fontWeight: '900' },
-  onlineToggleTitleOn: { color: '#0E0D0B' },
+  onlineToggleTitleOn: { color: '#0A0A0A' },
   onlineToggleSub: { color: palette.muted, fontSize: 11, marginTop: 4 },
-  onlineToggleSubOn: { color: '#0E0D0B' },
+  onlineToggleSubOn: { color: '#0A0A0A' },
   dispatchStatus: { color: palette.primary, fontSize: 11, fontWeight: '700', marginTop: 6 },
   message: { color: palette.primary, fontSize: 11, lineHeight: 16, marginTop: 8 },
   callLink: { color: palette.primary, fontSize: 12, fontWeight: '800', marginTop: 6 },
   vehicleChoiceSub: { color: palette.muted, fontSize: 9, marginTop: 2 },
+  navScreen: { flex: 1, backgroundColor: palette.bg },
+  navMap: { flex: 1 },
+  navTopCard: { position: 'absolute', top: 48, left: 12, right: 12, borderRadius: 16, backgroundColor: palette.elevated, borderWidth: 1, borderColor: palette.border, padding: 14 },
+  navEyebrow: { color: palette.primary, fontSize: 12, fontWeight: '900' },
+  navAddress: { color: palette.text, fontSize: 16, fontWeight: '800', marginTop: 4 },
+  navEta: { color: palette.text, fontSize: 22, fontWeight: '900', marginTop: 6 },
+  navBottom: { position: 'absolute', bottom: 24, left: 12, right: 12, borderRadius: 16, backgroundColor: palette.elevated, borderWidth: 1, borderColor: palette.border, padding: 12, paddingBottom: 2 },
   payout: { color: '#4CC157', fontSize: 15, fontWeight: '900', marginTop: 6 },
   adminTabs: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 4, marginBottom: 6 },
   adminTab: { paddingHorizontal: 14, paddingVertical: 9, borderRadius: 18, borderWidth: 1, borderColor: palette.border },

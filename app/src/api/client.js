@@ -171,6 +171,19 @@ export function estimateFare(category, distanceKm, serviceType = 'OUTSTATION', r
     body: JSON.stringify({ category, distanceKm, serviceType, roundTrip })
   });
 }
+export function getWeddingVehicles() {
+  return request('/wedding/vehicles', { skipAuth: true });
+}
+export function createWeddingBooking(payload) {
+  return request('/wedding/bookings', { method: 'POST', body: JSON.stringify(payload) }, 15000);
+}
+// Photo/PDF of a DL, RC or insurance for a pending partner registration.
+export function uploadPartnerDocument(applicationId, type, file) {
+  return request(`/partners/applications/${applicationId}/documents`, {
+    method: 'POST',
+    body: JSON.stringify({ type, data: file.data, contentType: file.contentType })
+  }, 60000);
+}
 // All-inclusive prices for every vehicle type for one trip.
 export function getQuotes(trip) {
   return request('/pricing/quote', { method: 'POST', skipAuth: true, body: JSON.stringify(trip) }, 15000);
