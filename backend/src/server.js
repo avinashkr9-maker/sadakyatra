@@ -7,7 +7,7 @@ import {
   UploadError, WEDDING_CARS_BUCKET, getPartnerDocumentsBucket, getSupabaseAdmin, publicUrl, readUpload, signedUrl, uploadObject
 } from './supabase.js';
 import {
-  OtpUnavailableError, STAFF_PERMISSIONS, authenticate, describeTestNumbers, checkOtp, createSession, endSession, findOrCreateUser,
+  OtpUnavailableError, STAFF_PERMISSIONS, authenticate, describeTestNumbers, endOtherSessions, isOwnerPhone, passwordProblem, setPassword, verifyPassword, checkOtp, createSession, endSession, findOrCreateUser,
   grantRole, isValidIndianPhone, loadAccount, loginWithPhone, normalizePhone, requestOtp, requireLogin, requireStaff
 } from './auth.js';
 import { CHANNELS, notifyStaff, notifyUsers } from './notify.js';
@@ -164,6 +164,86 @@ app.post('/auth/otp/verify', rateLimit('otp-verify-ip', 60, 15 * 60_000), handle
   res.json({ token, account: await loadAccount(user.id) });
 }));
 
+// ---- Login (mobile number + password) -----------------------------------
+const bearerToken = (req) => req.get('authorization')?.replace(/^Bearer\s+/i, '') || '';
+const loginPhone = (req) => normalizePhone(req.body?.phone);
+
+// Customers and partners create their own account; the owner's number can't be claimed this way.
+app.post('/auth/signup', rateLimit('signup-ip', 20, 60 * 60_000), handle(async (req, res) => {
+  const phone = loginPhone(req);
+  const fullName = typeof req.body.fullName === 'string' ? req.body.fullName.trim() : '';
+  if (!isValidIndianPhone(phone)) return res.status(400).json({ error: 'Enter a valid 10-digit mobile number.' });
+  if (fullName.length < 2 || fullName.length > 80) return res.status(400).json({ error: 'Please enter your full name.' });
+  const problem = passwordProblem(req.body.password);
+  if (problem) return res.status(400).json({ error: problem });
+  if (isOwnerPhone(phone)) return res.status(403).json({ error: 'This number belongs to the SadakYatra owner account. Please log in.' });
+  const existing = await one(`
+    SELECT u.id, u.password_hash, EXISTS (SELECT 1 FROM user_roles r WHERE r.user_id = u.id AND r.role IN ('admin','owner')) AS staff
+    FROM users u WHERE u.phone = $1
+  `, [phone]);
+  if (existing?.password_hash) return res.status(409).json({ error: 'An account with this number already exists. Please log in.' });
+  if (existing?.staff) return res.status(403).json({ error: 'Admin accounts get their password from the SadakYatra owner.' });
+
+  const user = await loginWithPhone(phone);
+  await query('UPDATE users SET full_name = $1 WHERE id = $2', [fullName, user.id]);
+  await setPassword(user.id, req.body.password);
+  const token = await createSession(user.id);
+  res.status(201).json({ token, account: await loadAccount(user.id) });
+}));
+
+app.post('/auth/login',
+  rateLimit('login-ip', 40, 15 * 60_000),
+  rateLimit('login-phone', 10, 15 * 60_000, (req) => loginPhone(req)),
+  handle(async (req, res) => {
+    const phone = loginPhone(req);
+    const password = typeof req.body.password === 'string' ? req.body.password : '';
+    if (!isValidIndianPhone(phone) || !password) return res.status(400).json({ error: 'Enter your mobile number and password.' });
+    const user = await one('SELECT id, password_hash FROM users WHERE phone = $1', [phone]);
+
+    if (!user?.password_hash) {
+      // First owner login uses OWNER_PASSWORD from the server settings, then it is stored like any password.
+      const ownerPassword = process.env.OWNER_PASSWORD || '';
+      const supplied = Buffer.from(password);
+      const expected = Buffer.from(ownerPassword);
+      if (isOwnerPhone(phone) && ownerPassword && supplied.length === expected.length && timingSafeEqual(supplied, expected)) {
+        const owner = await loginWithPhone(phone);
+        await setPassword(owner.id, password);
+        return res.json({ token: await createSession(owner.id), account: await loadAccount(owner.id) });
+      }
+      if (user) return res.status(401).json({ error: 'This number has no password yet. Tap "Create account" to set one.' });
+      return res.status(401).json({ error: 'No account with this number. Tap "Create account".' });
+    }
+    if (!(await verifyPassword(password, user.password_hash))) {
+      return res.status(401).json({ error: 'Wrong mobile number or password.' });
+    }
+    await loginWithPhone(phone); // keeps roles current and links drivers approved before this account existed
+    res.json({ token: await createSession(user.id), account: await loadAccount(user.id) });
+  }));
+
+app.post('/me/password', requireLogin, rateLimit('password-change', 10, 15 * 60_000, (req) => req.account.id), handle(async (req, res) => {
+  const user = await one('SELECT password_hash FROM users WHERE id = $1', [req.account.id]);
+  if (user.password_hash && !(await verifyPassword(req.body.currentPassword, user.password_hash))) {
+    return res.status(401).json({ error: 'Your current password is wrong.' });
+  }
+  const problem = passwordProblem(req.body.newPassword);
+  if (problem) return res.status(400).json({ error: problem });
+  await setPassword(req.account.id, req.body.newPassword);
+  await endOtherSessions(req.account.id, bearerToken(req));
+  res.json({ changed: true });
+}));
+
+// Owner sets a new password for someone who forgot theirs (there is no OTP reset).
+app.post('/admin/users/password', requireStaff('admins'), handle(async (req, res) => {
+  const phone = normalizePhone(req.body.phone);
+  const problem = passwordProblem(req.body.password);
+  if (problem) return res.status(400).json({ error: problem });
+  const user = await one('SELECT id, full_name FROM users WHERE phone = $1', [phone]);
+  if (!user) return res.status(404).json({ error: 'No account with this number.' });
+  await setPassword(user.id, req.body.password);
+  await query('DELETE FROM sessions WHERE user_id = $1', [user.id]);
+  res.json({ reset: true, fullName: user.full_name });
+}));
+
 app.post('/auth/logout', requireLogin, handle(async (req, res) => {
   await endSession(req.get('authorization').replace(/^Bearer\s+/i, ''));
   res.json({ ok: true });
@@ -230,9 +310,17 @@ app.post('/admin/admins', requireStaff('admins'), handle(async (req, res) => {
   if (!permissions.length || permissions.some((item) => !STAFF_PERMISSIONS.includes(item))) {
     return res.status(400).json({ error: `Choose at least one permission: ${STAFF_PERMISSIONS.join(', ')}` });
   }
+  // A new admin needs a starting password from the owner; they can change it later.
+  const existing = await one('SELECT password_hash FROM users WHERE phone = $1', [phone]);
+  const startingPassword = req.body.password;
+  if (!existing?.password_hash || startingPassword) {
+    const problem = passwordProblem(startingPassword);
+    if (problem) return res.status(400).json({ error: `Starting password: ${problem.toLowerCase()}` });
+  }
   const admin = await transaction(async (client) => {
     const user = await findOrCreateUser(phone, fullName || null, client);
     await grantRole(user.id, 'admin', permissions, client);
+    if (startingPassword) await setPassword(user.id, startingPassword, client);
     return user;
   });
   res.status(201).json({ admin: { id: admin.id, full_name: admin.full_name, phone, permissions } });

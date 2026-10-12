@@ -156,6 +156,15 @@ export function requestOtp(phone) {
 export function verifyOtp(phone, code) {
   return request('/auth/otp/verify', { method: 'POST', skipAuth: true, body: JSON.stringify({ phone, code }) }, 20000);
 }
+export function signup(phone, fullName, password) {
+  return request('/auth/signup', { method: 'POST', skipAuth: true, body: JSON.stringify({ phone, fullName, password }) }, 20000);
+}
+export function loginWithPassword(phone, password) {
+  return request('/auth/login', { method: 'POST', skipAuth: true, body: JSON.stringify({ phone, password }) }, 20000);
+}
+export function changePassword(currentPassword, newPassword) {
+  return request('/me/password', { method: 'POST', body: JSON.stringify({ currentPassword, newPassword }) });
+}
 export function getMe() {
   return request('/me');
 }

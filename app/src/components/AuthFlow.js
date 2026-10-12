@@ -1,10 +1,10 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
-  ActivityIndicator, Alert, Image, KeyboardAvoidingView, Linking, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View
+  ActivityIndicator, Alert, Image, KeyboardAvoidingView, Linking, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Car, ChevronLeft, ChevronRight, Clock, Phone, ShieldCheck, User, Users } from 'lucide-react-native';
-import { getMe, requestOtp, submitPartnerApplication, updateMe, uploadPartnerDocument, verifyOtp } from '../api/client';
+import { changePassword, getMe, loginWithPassword, signup, submitPartnerApplication, updateMe, uploadPartnerDocument } from '../api/client';
 import { pickPhoto } from '../pickPhoto';
 
 const logo = require('../../assets/loveable/sadakyatra-logo.png');
@@ -112,119 +112,157 @@ export function WelcomeScreen({ onChoose }) {
   );
 }
 
-// ---- 2. Mobile number + OTP ----------------------------------------------
+// ---- 2. Mobile number + password -----------------------------------------
 const INTENT_TITLES = {
-  customer: ['Customer Login', 'Enter your mobile number to continue'],
-  partner: ['Partner Registration', 'Enter your mobile number to continue'],
-  login: ['Welcome back', 'Log in with your mobile number']
+  customer: 'Book a Cab',
+  partner: 'Join as Cab Partner',
+  login: 'Welcome back'
 };
 
-export function OtpLoginScreen({ intent, onBack, onLoggedIn }) {
+function PasswordField({ label, value, onChangeText, autoFocus = false }) {
+  const [visible, setVisible] = useState(false);
+  return (
+    <View style={styles.field}>
+      <Text style={styles.fieldLabel}>{label}</Text>
+      <View style={styles.passwordRow}>
+        <TextInput
+          value={value}
+          onChangeText={onChangeText}
+          secureTextEntry={!visible}
+          autoCapitalize="none"
+          autoCorrect={false}
+          autoFocus={autoFocus}
+          placeholder="At least 6 characters"
+          placeholderTextColor="#A0A0A0"
+          style={styles.passwordInput}
+        />
+        <Pressable onPress={() => setVisible(!visible)} style={styles.showButton} hitSlop={8}>
+          <Text style={styles.showText}>{visible ? 'Hide' : 'Show'}</Text>
+        </Pressable>
+      </View>
+    </View>
+  );
+}
+
+function PhoneField({ value, onChangeText, autoFocus = false }) {
+  return (
+    <>
+      <Text style={styles.fieldLabel}>Mobile number</Text>
+      <View style={styles.phoneRow}>
+        <Text style={styles.phonePrefix}>+91</Text>
+        <TextInput
+          value={value}
+          onChangeText={onChangeText}
+          placeholder="10-digit mobile number"
+          placeholderTextColor="#A0A0A0"
+          keyboardType="phone-pad"
+          maxLength={14}
+          autoFocus={autoFocus}
+          style={styles.phoneInput}
+        />
+      </View>
+    </>
+  );
+}
+
+// Log in, or create an account with your own password. "Book a Cab" and "Join as Cab Partner" start on Create account.
+export function PasswordLoginScreen({ intent, onBack, onLoggedIn }) {
+  const [mode, setMode] = useState(intent === 'login' ? 'login' : 'signup');
+  const [fullName, setFullName] = useState('');
   const [phone, setPhone] = useState('');
-  const [code, setCode] = useState('');
-  const [step, setStep] = useState('phone');
+  const [password, setPassword] = useState('');
+  const [confirm, setConfirm] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  const [resendIn, setResendIn] = useState(0);
-  const timer = useRef(null);
-  const [title, subtitle] = INTENT_TITLES[intent] || INTENT_TITLES.login;
+  const signingUp = mode === 'signup';
 
-  useEffect(() => () => clearInterval(timer.current), []);
-
-  function startResendTimer(seconds) {
-    setResendIn(seconds);
-    clearInterval(timer.current);
-    timer.current = setInterval(() => setResendIn((value) => {
-      if (value <= 1) { clearInterval(timer.current); return 0; }
-      return value - 1;
-    }), 1000);
+  function switchMode() {
+    setMode(signingUp ? 'login' : 'signup');
+    setError('');
+    setPassword('');
+    setConfirm('');
   }
 
-  async function sendCode() {
+  async function submit() {
     const clean = normalizePhone(phone);
     if (!isValidPhone(clean)) return setError('Enter a valid 10-digit mobile number.');
+    if (signingUp && fullName.trim().length < 2) return setError('Enter your full name.');
+    if (password.length < 6) return setError('Password must be at least 6 characters.');
+    if (signingUp && password !== confirm) return setError('The two passwords do not match.');
     setBusy(true);
     setError('');
     try {
-      await requestOtp(clean);
-      setPhone(clean);
-      setStep('code');
-      startResendTimer(30);
-    } catch (err) {
-      if (err.status === 429 && step === 'phone') setStep('code');
-      setError(err.offline ? 'No internet connection. Please try again.' : err.message);
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function verify() {
-    if (!/^\d{6}$/.test(code)) return setError('Enter the 6-digit code.');
-    setBusy(true);
-    setError('');
-    try {
-      const result = await verifyOtp(phone, code);
+      const result = signingUp ? await signup(clean, fullName.trim(), password) : await loginWithPassword(clean, password);
       onLoggedIn(result.token, result.account);
     } catch (err) {
       setError(err.offline ? 'No internet connection. Please try again.' : err.message);
+      // "Already exists" on signup → offer login with the number kept.
+      if (err.status === 409) setMode('login');
       setBusy(false);
     }
   }
 
   return (
-    <Screen onBack={step === 'code' ? () => { setStep('phone'); setCode(''); setError(''); } : onBack}>
+    <Screen onBack={onBack}>
       <Logo small />
-      <Text style={styles.title}>{step === 'code' ? 'Enter OTP' : title}</Text>
-      <Text style={styles.subtitle}>{step === 'code' ? `We sent a 6-digit code to +91 ${phone}` : subtitle}</Text>
+      <Text style={styles.title}>{signingUp ? 'Create your account' : INTENT_TITLES[intent] || INTENT_TITLES.login}</Text>
+      <Text style={styles.subtitle}>{signingUp ? 'Use your mobile number and choose a password.' : 'Log in with your mobile number and password.'}</Text>
       <View style={styles.card}>
-        {step === 'phone' ? (
-          <>
-            <Text style={styles.fieldLabel}>Mobile number</Text>
-            <View style={styles.phoneRow}>
-              <Text style={styles.phonePrefix}>+91</Text>
-              <TextInput
-                value={phone}
-                onChangeText={(value) => { setPhone(value); setError(''); }}
-                placeholder="10-digit mobile number"
-                placeholderTextColor="#A0A0A0"
-                keyboardType="phone-pad"
-                maxLength={14}
-                autoFocus
-                style={styles.phoneInput}
-              />
-            </View>
-            <ErrorText>{error}</ErrorText>
-            <Button label="Send OTP" onPress={sendCode} busy={busy} />
-          </>
-        ) : (
-          <>
-            <TextInput
-              value={code}
-              onChangeText={(value) => { setCode(value.replace(/\D/g, '').slice(0, 6)); setError(''); }}
-              placeholder="••••••"
-              placeholderTextColor="#C0C0C0"
-              keyboardType="number-pad"
-              textContentType="oneTimeCode"
-              autoComplete="sms-otp"
-              maxLength={6}
-              autoFocus
-              style={styles.otpInput}
-            />
-            <ErrorText>{error}</ErrorText>
-            <Button label="Verify & continue" onPress={verify} busy={busy} disabled={code.length !== 6} />
-            <Pressable onPress={sendCode} disabled={resendIn > 0 || busy} style={styles.resend}>
-              <Text style={[styles.resendText, resendIn > 0 && styles.resendDisabled]}>
-                {resendIn > 0 ? `Resend code in ${resendIn}s` : 'Resend code'}
-              </Text>
-            </Pressable>
-          </>
-        )}
+        {signingUp ? <Field label="Full name" value={fullName} onChangeText={setFullName} placeholder="e.g. Rohit Kumar" autoCapitalize="words" autoFocus /> : null}
+        <PhoneField value={phone} onChangeText={(value) => { setPhone(value); setError(''); }} autoFocus={!signingUp} />
+        <PasswordField label={signingUp ? 'Choose a password' : 'Password'} value={password} onChangeText={(value) => { setPassword(value); setError(''); }} />
+        {signingUp ? <PasswordField label="Type the password again" value={confirm} onChangeText={(value) => { setConfirm(value); setError(''); }} /> : null}
+        <ErrorText>{error}</ErrorText>
+        <Button label={signingUp ? 'Create account' : 'Log in'} onPress={submit} busy={busy} />
+        <Pressable onPress={switchMode} style={styles.resend}>
+          <Text style={styles.resendText}>{signingUp ? 'Already have an account? Log in' : 'New here? Create an account'}</Text>
+        </Pressable>
       </View>
       <Pressable onPress={() => Linking.openURL(`tel:${SUPPORT_PHONE}`)} style={styles.helpRow}>
         <Phone color={brand.muted} size={14} />
-        <Text style={styles.helpText}>Trouble logging in? Call +91 {SUPPORT_PHONE}</Text>
+        <Text style={styles.helpText}>Forgot password? Call +91 {SUPPORT_PHONE}</Text>
       </Pressable>
     </Screen>
+  );
+}
+
+// Popup to change your password (other phones are logged out).
+export function ChangePasswordModal({ visible, onClose }) {
+  const [current, setCurrent] = useState('');
+  const [next, setNext] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState('');
+
+  async function save() {
+    if (next.length < 6) return setMessage('New password must be at least 6 characters.');
+    setBusy(true);
+    setMessage('');
+    try {
+      await changePassword(current, next);
+      setCurrent('');
+      setNext('');
+      setBusy(false);
+      onClose();
+      Alert.alert('Password changed', 'Use your new password next time you log in.');
+    } catch (err) {
+      setMessage(err.message);
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.modalBackdrop}>
+        <View style={styles.card}>
+          <Text style={styles.modalTitle}>Change password</Text>
+          <PasswordField label="Current password" value={current} onChangeText={setCurrent} autoFocus />
+          <PasswordField label="New password" value={next} onChangeText={setNext} />
+          <ErrorText>{message}</ErrorText>
+          <Button label="Save new password" onPress={save} busy={busy} />
+          <Pressable onPress={onClose} style={styles.resend}><Text style={styles.resendText}>Cancel</Text></Pressable>
+        </View>
+      </KeyboardAvoidingView>
+    </Modal>
   );
 }
 
@@ -431,12 +469,17 @@ export const VIEW_LABELS = { customer: 'Book a cab', driver: 'Driver', fleet: 'M
 
 export function RoleShell({ view, views, onSwitch, onLogout, children }) {
   const insets = useSafeAreaInsets();
+  const [changingPassword, setChangingPassword] = useState(false);
   return (
     <View style={[styles.shell, { paddingTop: insets.top }]}>
       <View style={styles.shellHeader}>
         <Logo small />
-        <Pressable onPress={onLogout} style={styles.shellLogout}><Text style={styles.shellLogoutText}>Log out</Text></Pressable>
+        <View style={styles.shellActions}>
+          <Pressable onPress={() => setChangingPassword(true)} style={styles.shellLogout}><Text style={styles.shellLogoutText}>Password</Text></Pressable>
+          <Pressable onPress={onLogout} style={styles.shellLogout}><Text style={styles.shellLogoutText}>Log out</Text></Pressable>
+        </View>
       </View>
+      <ChangePasswordModal visible={changingPassword} onClose={() => setChangingPassword(false)} />
       {views.length > 1 ? (
         <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.switcher} contentContainerStyle={styles.switcherContent}>
           {views.map((item) => (
@@ -527,6 +570,13 @@ const styles = StyleSheet.create({
   statusIcon: { alignSelf: 'center', width: 80, height: 80, borderRadius: 40, backgroundColor: brand.surface, alignItems: 'center', justifyContent: 'center', marginBottom: 16 },
   shell: { flex: 1, backgroundColor: brand.black },
   shellHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingTop: 12 },
+  shellActions: { flexDirection: 'row', gap: 8 },
+  passwordRow: { flexDirection: 'row', alignItems: 'center', borderRadius: 12, borderWidth: 1, borderColor: brand.line },
+  passwordInput: { flex: 1, minHeight: 48, paddingHorizontal: 14, fontSize: 16, color: brand.ink },
+  showButton: { paddingHorizontal: 14, paddingVertical: 12 },
+  showText: { color: '#8A6D00', fontSize: 13, fontWeight: '800' },
+  modalBackdrop: { flex: 1, justifyContent: 'flex-end', padding: 16, backgroundColor: 'rgba(0,0,0,0.6)' },
+  modalTitle: { color: brand.ink, fontSize: 20, fontWeight: '900', marginBottom: 12 },
   shellLogout: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 10, borderWidth: 1, borderColor: brand.border, marginBottom: 20 },
   shellLogoutText: { color: brand.white, fontSize: 13, fontWeight: '700' },
   switcher: { flexGrow: 0 },

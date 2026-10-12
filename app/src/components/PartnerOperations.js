@@ -754,6 +754,9 @@ function AdminAccounts({ admins, onChanged, onMessage }) {
   const [phone, setPhone] = useState('');
   const [fullName, setFullName] = useState('');
   const [permissions, setPermissions] = useState(['bookings']);
+  const [password, setPassword] = useState('');
+  const [resetPhone, setResetPhone] = useState('');
+  const [resetPassword, setResetPassword] = useState('');
 
   function togglePermission(permission) {
     setPermissions((current) => (current.includes(permission) ? current.filter((item) => item !== permission) : [...current, permission]));
@@ -761,13 +764,26 @@ function AdminAccounts({ admins, onChanged, onMessage }) {
 
   async function addAdmin() {
     try {
-      await apiRequest('/admin/admins', 'POST', { phone, fullName, permissions });
-      onMessage(`Admin added. They can now log in with +91 ${phone.replace(/\D/g, '').slice(-10)}.`);
+      await apiRequest('/admin/admins', 'POST', { phone, fullName, permissions, password: password || undefined });
+      onMessage(`Admin added. They log in with +91 ${phone.replace(/\D/g, '').slice(-10)} and the starting password, then change it.`);
       setPhone('');
       setFullName('');
+      setPassword('');
       onChanged();
     } catch (error) {
       onMessage(error.message || 'Could not add admin.');
+    }
+  }
+
+  // There is no OTP, so a forgotten password is reset here by the owner.
+  async function resetUserPassword() {
+    try {
+      const result = await apiRequest('/admin/users/password', 'POST', { phone: resetPhone, password: resetPassword });
+      onMessage(`New password set for ${result.fullName || 'this account'}. Tell them in person or on a call.`);
+      setResetPhone('');
+      setResetPassword('');
+    } catch (error) {
+      onMessage(error.message || 'Could not reset the password.');
     }
   }
 
@@ -796,6 +812,7 @@ function AdminAccounts({ admins, onChanged, onMessage }) {
         <Text style={styles.itemTitle}>Add an admin</Text>
         <TextInput value={fullName} onChangeText={setFullName} placeholder="Name" placeholderTextColor={palette.muted} style={styles.formInput} />
         <TextInput value={phone} onChangeText={setPhone} placeholder="Mobile number" keyboardType="phone-pad" placeholderTextColor={palette.muted} style={styles.formInput} />
+        <TextInput value={password} onChangeText={setPassword} placeholder="Starting password (6+ characters)" autoCapitalize="none" placeholderTextColor={palette.muted} style={styles.formInput} />
         <View style={[styles.badgeRow, styles.offerActions]}>
           {Object.entries(PERMISSION_LABELS).map(([permission, label]) => (
             <Pressable key={permission} onPress={() => togglePermission(permission)} style={[styles.vehicleChoice, permissions.includes(permission) && styles.vehicleChoiceActive]}>
@@ -804,6 +821,13 @@ function AdminAccounts({ admins, onChanged, onMessage }) {
           ))}
         </View>
         <View style={styles.offerActions}><ActionButton label="Add admin" onPress={addAdmin} primary /></View>
+      </View>
+      <View style={styles.listItem}>
+        <Text style={styles.itemTitle}>Reset a forgotten password</Text>
+        <Text style={styles.itemMeta}>For any customer, driver or admin. They are logged out everywhere and log in with the new password.</Text>
+        <TextInput value={resetPhone} onChangeText={setResetPhone} placeholder="Their mobile number" keyboardType="phone-pad" placeholderTextColor={palette.muted} style={styles.formInput} />
+        <TextInput value={resetPassword} onChangeText={setResetPassword} placeholder="New password (6+ characters)" autoCapitalize="none" placeholderTextColor={palette.muted} style={styles.formInput} />
+        <View style={styles.offerActions}><ActionButton label="Set new password" onPress={resetUserPassword} primary /></View>
       </View>
     </>
   );

@@ -22,7 +22,7 @@ import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-cont
 import * as Location from 'expo-location';
 import { AdminDashboard, DriverDashboard, OwnerFleet, setCategoryNames, signOutDriver } from './src/components/PartnerOperations';
 import {
-  LoadingScreen, OtpLoginScreen, PartnerSignupScreen, PartnerStatusScreen, ProfileScreen, RoleShell, VIEW_LABELS, WelcomeScreen
+  ChangePasswordModal, LoadingScreen, PasswordLoginScreen, PartnerSignupScreen, PartnerStatusScreen, ProfileScreen, RoleShell, VIEW_LABELS, WelcomeScreen
 } from './src/components/AuthFlow';
 import { CHANNELS, alertLocal, hasRemotePush, registerForPush, unregisterPush } from './src/notifications';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -455,7 +455,7 @@ function RootScreens({ pricing }) {
   if (booting) return <LoadingScreen />;
   if (!account) {
     if (!intent) return <WelcomeScreen onChoose={setIntent} />;
-    return <OtpLoginScreen intent={intent} onBack={() => setIntent(null)} onLoggedIn={onLoggedIn} />;
+    return <PasswordLoginScreen intent={intent} onBack={() => setIntent(null)} onLoggedIn={onLoggedIn} />;
   }
   if (!account.profileComplete) {
     return <ProfileScreen account={account} onSaved={(saved) => { applyAccount(saved); chooseView(defaultView(saved, intent, lastViewRef.current)); }} />;
@@ -529,6 +529,7 @@ function SadakYatraApp({ account, views, onSwitchView, onLogout, onJoinPartner }
   const [submitting, setSubmitting] = useState(false);
   const [apiUrl, setApiUrl] = useState('');
   const [authModalVisible, setAuthModalVisible] = useState(false);
+  const [changingPassword, setChangingPassword] = useState(false);
   const pricing = usePricing();
 
   useEffect(() => {
@@ -852,6 +853,9 @@ function SadakYatraApp({ account, views, onSwitchView, onLogout, onJoinPartner }
           <View style={styles.modalContent}>
             <Text style={styles.modalTitle}>Your account</Text>
             <Text style={styles.modalSubtitle}>{account.fullName ? `${account.fullName} · ` : ''}+91 {account.phone}</Text>
+            <Pressable style={styles.modalButtonSecondary} onPress={() => { setAuthModalVisible(false); setChangingPassword(true); }}>
+              <Text style={styles.modalButtonTextSecondary}>Change password</Text>
+            </Pressable>
             <View style={styles.modalButtons}>
               <Pressable style={styles.modalButtonSecondary} onPress={() => { setAuthModalVisible(false); onLogout(); }}>
                 <View style={styles.rowCenter}><LogOut color={colors.text} size={16} /><Text style={styles.modalButtonTextSecondary}>Log out</Text></View>
@@ -863,6 +867,7 @@ function SadakYatraApp({ account, views, onSwitchView, onLogout, onJoinPartner }
           </View>
         </KeyboardAvoidingView>
       </Modal>
+      <ChangePasswordModal visible={changingPassword} onClose={() => setChangingPassword(false)} />
     </View>
   );
 }

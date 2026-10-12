@@ -1,4 +1,4 @@
-import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
+import { createHash, randomBytes, scrypt, timingSafeEqual } from 'node:crypto';
 import { one, query, transaction } from './db.js';
 
 const OTP_TTL_SECONDS = 5 * 60;
@@ -91,6 +91,43 @@ export async function checkOtp(phone, code) {
   if (!timingSafeEqual(supplied, Buffer.from(row.code_hash))) return false;
   await query('DELETE FROM otp_codes WHERE phone = $1', [phone]);
   return true;
+}
+
+// ---- Passwords (scrypt, from Node's crypto; no extra dependency) ---------
+const scryptAsync = (password, salt) => new Promise((resolve, reject) => {
+  scrypt(password, salt, 64, (error, key) => (error ? reject(error) : resolve(key)));
+});
+
+export const PASSWORD_MIN = 6;
+
+export function passwordProblem(password) {
+  if (typeof password !== 'string' || password.length < PASSWORD_MIN) return `Password must be at least ${PASSWORD_MIN} characters`;
+  if (password.length > 100) return 'Password is too long';
+  return null;
+}
+
+export async function hashPassword(password) {
+  const salt = randomBytes(16).toString('base64url');
+  return `scrypt$${salt}$${(await scryptAsync(password, salt)).toString('base64url')}`;
+}
+
+export async function verifyPassword(password, stored) {
+  const [scheme, salt, hash] = String(stored || '').split('$');
+  if (scheme !== 'scrypt' || !salt || !hash || typeof password !== 'string') return false;
+  const expected = Buffer.from(hash, 'base64url');
+  const actual = await scryptAsync(password, salt);
+  return actual.length === expected.length && timingSafeEqual(actual, expected);
+}
+
+export async function setPassword(userId, password, client) {
+  await query('UPDATE users SET password_hash = $1, password_changed_at = now() WHERE id = $2', [await hashPassword(password), userId], client);
+}
+
+export const isOwnerPhone = (phone) => Boolean(process.env.OWNER_PHONE) && normalizePhone(process.env.OWNER_PHONE) === phone;
+
+// Sessions on other phones end when the password changes.
+export function endOtherSessions(userId, keepToken) {
+  return query('DELETE FROM sessions WHERE user_id = $1 AND token_hash <> $2', [userId, sha256(keepToken || '')]);
 }
 
 export async function findOrCreateUser(phone, fullName = null, client) {
