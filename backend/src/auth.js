@@ -19,14 +19,32 @@ export function isValidIndianPhone(phone) {
   return /^[6-9]\d{9}$/.test(phone);
 }
 
-// "9304057169:482913,9000000001:111111" -> fixed codes for testing before an SMS provider is set up.
-function testCodes() {
+export const maskPhone = (phone) => `${String(phone).slice(0, 2)}xxxxx${String(phone).slice(-3)}`;
+
+// "9304057169:482913, +91 90000 00001:111111" -> fixed codes for testing before an SMS provider is set up.
+// Entries may be separated by commas, semicolons or new lines; the number may carry +91 or spaces.
+function parseTestNumbers() {
   const codes = new Map();
-  for (const entry of String(process.env.OTP_TEST_NUMBERS || '').split(',')) {
-    const [phone, code] = entry.split(':').map((part) => part?.trim());
-    if (isValidIndianPhone(phone || '') && /^\d{6}$/.test(code || '')) codes.set(phone, code);
-  }
-  return codes;
+  const problems = [];
+  String(process.env.OTP_TEST_NUMBERS || '').split(/[,;\n]+/).map((entry) => entry.trim()).filter(Boolean).forEach((entry, index) => {
+    const [rawPhone, rawCode] = entry.split(':');
+    const phone = normalizePhone(rawPhone);
+    const code = String(rawCode || '').replace(/\s/g, '');
+    if (!isValidIndianPhone(phone)) problems.push(`entry ${index + 1}: "${rawPhone?.trim()}" is not a 10-digit mobile number`);
+    else if (!/^\d{6}$/.test(code)) problems.push(`entry ${index + 1} (${maskPhone(phone)}): code must be exactly 6 digits`);
+    else codes.set(phone, code);
+  });
+  return { codes, problems };
+}
+const testCodes = () => parseTestNumbers().codes;
+
+// Printed at startup so a mistyped OTP_TEST_NUMBERS shows up in the server logs.
+export function describeTestNumbers() {
+  const { codes, problems } = parseTestNumbers();
+  return [
+    `OTP test numbers accepted (${codes.size}): ${[...codes.keys()].map(maskPhone).join(', ') || 'none'}`,
+    ...problems.map((problem) => `OTP_TEST_NUMBERS ignored ${problem}`)
+  ];
 }
 
 export class OtpUnavailableError extends Error {}
@@ -35,6 +53,7 @@ export class OtpUnavailableError extends Error {}
 async function deliverOtp(phone) {
   const fixed = testCodes().get(phone);
   if (fixed) return fixed;
+  console.warn(`OTP refused for ${maskPhone(phone)}: not in OTP_TEST_NUMBERS and no SMS provider is set up`);
   throw new OtpUnavailableError('SMS login is not switched on yet');
 }
 
@@ -102,10 +121,20 @@ export function endSession(token) {
 }
 
 // Everyone who logs in is a customer; OWNER_PHONE becomes owner automatically.
+// Drivers approved before OTP login existed are linked to the account with their number.
 export async function loginWithPhone(phone) {
   return transaction(async (client) => {
     const user = await findOrCreateUser(phone, null, client);
     await query("INSERT INTO user_roles (user_id, role) VALUES ($1, 'customer') ON CONFLICT DO NOTHING", [user.id], client);
+    const legacyDriver = await one(`
+      UPDATE drivers SET user_id = $1
+      WHERE phone = $2 AND user_id IS NULL AND NOT EXISTS (SELECT 1 FROM drivers WHERE user_id = $1)
+      RETURNING partner_id
+    `, [user.id, phone], client);
+    if (legacyDriver) {
+      await query("INSERT INTO user_roles (user_id, role) VALUES ($1, 'driver') ON CONFLICT DO NOTHING", [user.id], client);
+      await query('UPDATE partners SET user_id = $1 WHERE id = $2 AND user_id IS NULL', [user.id, legacyDriver.partner_id], client);
+    }
     if (normalizePhone(process.env.OWNER_PHONE) === phone) {
       await query("INSERT INTO user_roles (user_id, role) VALUES ($1, 'owner') ON CONFLICT DO NOTHING", [user.id], client);
     }

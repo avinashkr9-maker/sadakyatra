@@ -358,6 +358,7 @@ export default function App() {
 }
 
 const SESSION_KEY = 'sadakyatra.session';
+const VIEW_KEY = 'sadakyatra.lastView';
 
 // Dashboards this account may open, most important first.
 function viewsFor(account) {
@@ -372,11 +373,16 @@ function viewsFor(account) {
   return views;
 }
 
-function defaultView(account, intent) {
-  const isPartner = account.roles.includes('driver') || account.roles.includes('vehicle_owner');
-  if (intent === 'partner' && !isPartner) {
+// Which screen to open: what the person tapped on the welcome screen, else the screen they used last.
+function defaultView(account, intent, lastView = null) {
+  const has = (role) => account.roles.includes(role);
+  if (intent === 'partner') {
+    if (has('driver')) return 'driver';
+    if (has('vehicle_owner')) return 'fleet';
     return account.partnerApplication?.status === 'PENDING' ? 'partnerStatus' : 'partnerSignup';
   }
+  if (intent === 'customer') return 'customer';
+  if (lastView && viewsFor(account).includes(lastView)) return lastView;
   return viewsFor(account)[0];
 }
 
@@ -386,6 +392,14 @@ function Root() {
   const [intent, setIntent] = useState(null);
   const [view, setView] = useState(null);
   const tokenRef = useRef(null);
+  const lastViewRef = useRef(null);
+
+  // Switching dashboards is remembered, so the next app launch opens the same one.
+  function chooseView(nextView) {
+    setView(nextView);
+    lastViewRef.current = nextView;
+    SecureStore.setItemAsync(VIEW_KEY, nextView).catch(() => {});
+  }
 
   function persist(nextAccount) {
     SecureStore.setItemAsync(SESSION_KEY, JSON.stringify({ token: tokenRef.current, account: nextAccount })).catch(() => {});
@@ -395,6 +409,8 @@ function Root() {
     tokenRef.current = null;
     setAuthToken(null);
     SecureStore.deleteItemAsync(SESSION_KEY).catch(() => {});
+    SecureStore.deleteItemAsync(VIEW_KEY).catch(() => {});
+    lastViewRef.current = null;
     setAccount(null);
     setView(null);
     setIntent(null);
@@ -412,14 +428,15 @@ function Root() {
 
   useEffect(() => {
     setSessionExpiredHandler(clearSession);
-    SecureStore.getItemAsync(SESSION_KEY)
-      .then((stored) => {
+    Promise.all([SecureStore.getItemAsync(SESSION_KEY), SecureStore.getItemAsync(VIEW_KEY).catch(() => null)])
+      .then(([stored, lastView]) => {
+        lastViewRef.current = lastView;
         if (!stored) return;
         const saved = JSON.parse(stored);
         tokenRef.current = saved.token;
         setAuthToken(saved.token);
         setAccount(saved.account);
-        setView(defaultView(saved.account, null));
+        setView(defaultView(saved.account, null, lastView));
         getMe().then((me) => applyAccount(me.account)).catch(() => {});
         registerForPush().catch(() => {});
       })
@@ -434,7 +451,8 @@ function Root() {
     const fullAccount = await getMe().then((me) => me.account).catch(() => loginAccount);
     setAccount(fullAccount);
     persist(fullAccount);
-    setView(fullAccount.profileComplete ? defaultView(fullAccount, intent) : null);
+    if (fullAccount.profileComplete) chooseView(defaultView(fullAccount, intent, lastViewRef.current));
+    else setView(null);
   }
 
   async function logout() {
@@ -450,7 +468,7 @@ function Root() {
     return <OtpLoginScreen intent={intent} onBack={() => setIntent(null)} onLoggedIn={onLoggedIn} />;
   }
   if (!account.profileComplete) {
-    return <ProfileScreen account={account} onSaved={(saved) => { applyAccount(saved); setView(defaultView(saved, intent)); }} />;
+    return <ProfileScreen account={account} onSaved={(saved) => { applyAccount(saved); chooseView(defaultView(saved, intent, lastViewRef.current)); }} />;
   }
 
   const current = view || defaultView(account, intent);
@@ -459,7 +477,7 @@ function Root() {
     return (
       <PartnerSignupScreen
         account={account}
-        onBack={() => setView('customer')}
+        onBack={() => chooseView('customer')}
         onSubmitted={(saved) => { applyAccount(saved); setView('partnerStatus'); }}
       />
     );
@@ -469,7 +487,7 @@ function Root() {
       <PartnerStatusScreen
         account={account}
         onAccount={applyAccount}
-        onBookCab={() => setView('customer')}
+        onBookCab={() => chooseView('customer')}
         onApplyAgain={() => setView('partnerSignup')}
         onLogout={logout}
       />
@@ -480,14 +498,14 @@ function Root() {
       <SadakYatraApp
         account={account}
         views={views}
-        onSwitchView={setView}
+        onSwitchView={chooseView}
         onLogout={logout}
         onJoinPartner={() => setView(account.partnerApplication?.status === 'PENDING' ? 'partnerStatus' : 'partnerSignup')}
       />
     );
   }
   return (
-    <RoleShell view={current} views={views} onSwitch={setView} onLogout={logout}>
+    <RoleShell view={current} views={views} onSwitch={chooseView} onLogout={logout}>
       {current === 'admin' ? <AdminDashboard account={account} /> : null}
       {current === 'driver' ? <DriverDashboard /> : null}
       {current === 'fleet' ? <OwnerFleet /> : null}

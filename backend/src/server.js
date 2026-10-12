@@ -5,7 +5,7 @@ import { customAlphabet } from 'nanoid';
 import { one, query, transaction } from './db.js';
 import { getPartnerDocumentsBucket, getSupabaseAdmin } from './supabase.js';
 import {
-  OtpUnavailableError, STAFF_PERMISSIONS, authenticate, checkOtp, createSession, endSession, findOrCreateUser,
+  OtpUnavailableError, STAFF_PERMISSIONS, authenticate, describeTestNumbers, checkOtp, createSession, endSession, findOrCreateUser,
   grantRole, isValidIndianPhone, loadAccount, loginWithPhone, normalizePhone, requestOtp, requireLogin, requireStaff
 } from './auth.js';
 import { CHANNELS, notifyStaff, notifyUsers } from './notify.js';
@@ -297,6 +297,21 @@ app.post('/partners/applications', requireLogin, rateLimit('partner-apply', 5, 6
   }
   const pending = await one("SELECT id FROM partner_applications WHERE applicant_user_id = $1 AND status = 'PENDING'", [req.account.id]);
   if (pending) return res.status(409).json({ error: 'Your registration is already waiting for SadakYatra approval.' });
+  // Catch duplicates now, not when the admin tries to approve.
+  const existingDriver = await one('SELECT d.user_id, v.cab_ref FROM drivers d LEFT JOIN vehicles v ON v.driver_id = d.id WHERE d.phone = $1', [driverPhone]);
+  if (existingDriver) {
+    return res.status(409).json({
+      error: existingDriver.user_id === req.account.id || driverPhone === phone
+        ? `You are already a SadakYatra driver${existingDriver.cab_ref ? ` (${existingDriver.cab_ref})` : ''}. Log out and log in again to open your driver dashboard.`
+        : `+91 ${driverPhone} is already registered as a SadakYatra driver.`
+    });
+  }
+  const plateTaken = await one(`
+    SELECT 1 FROM vehicles WHERE replace(plate_no, ' ', '') = replace($1, ' ', '')
+    UNION ALL
+    SELECT 1 FROM partner_applications WHERE status = 'PENDING' AND replace(vehicle_number, ' ', '') = replace($1, ' ', '')
+  `, [plate]);
+  if (plateTaken) return res.status(409).json({ error: `Vehicle ${plate} is already registered with SadakYatra.` });
 
   const application = await transaction(async (client) => {
     if (!req.account.fullName) await query('UPDATE users SET full_name = $1 WHERE id = $2', [fullName, req.account.id], client);
@@ -796,7 +811,12 @@ app.post('/admin/partners/applications/:id/approve', requireStaff('partners'), h
     });
   } catch (error) {
     console.error('Partner approval failed', error.message);
-    return res.status(409).json({ error: 'Could not approve this application. The driver phone or vehicle number may already be registered.' });
+    const reasons = {
+      drivers_phone_key: `+91 ${application.driver_phone} is already registered as a driver. Reject this duplicate registration.`,
+      drivers_user_id_key: `+91 ${application.driver_phone} already drives another SadakYatra cab. Reject this duplicate registration.`,
+      vehicles_plate_no_key: `Vehicle ${application.vehicle_number} is already registered. Reject this duplicate registration.`
+    };
+    return res.status(409).json({ error: reasons[error.constraint] || 'Could not approve this application. Please try again or call support.' });
   }
   res.status(201).json({
     ...approved,
@@ -1146,4 +1166,5 @@ app.use((error, _req, res, _next) => {
 
 app.listen(port, () => {
   console.log(`SadakYatra backend running on http://localhost:${port}`);
+  describeTestNumbers().forEach((line) => console.log(line));
 });
