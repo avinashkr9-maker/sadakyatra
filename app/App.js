@@ -112,6 +112,8 @@ function normalizePhone(value) {
 const CATEGORY_NAMES = { hatchback: 'Hatchback', sedan: 'Sedan', suv: 'SUV', seven_seater: '7-Seater', traveller: 'Tempo Traveller' };
 const TRIP_TYPE_LABELS = { ONE_WAY: 'One-way', ROUND_TRIP: 'Round trip', LOCAL: 'Local ride', WEDDING: 'Wedding' };
 
+const DEFAULT_PIN = { label: 'Muzaffarpur', latitude: 26.1209, longitude: 85.391 };
+
 const BOOKING_STATUS = {
   PENDING_APPROVAL: { label: 'Awaiting approval', style: 'statusPending' },
   ON_HOLD: { label: 'Being reviewed', style: 'statusPending' },
@@ -175,7 +177,7 @@ const CATEGORY_ART = { hatchback: img.sedan, sedan: img.sedan, suv: img.suv, sev
 const CATEGORY_DETAILS = {
   hatchback: { features: ['Budget-friendly AC cab', 'Best for 1-3 people', 'City & short drop trips'] },
   sedan: { badge: 'MOST POPULAR', features: ['Fully Air Conditioned', 'Professional Chauffeur', 'Best for Airport & Drop Only'] },
-  suv: { features: ['Extra Space & Legroom', 'Family Drop-Only Trips', 'Wedding Decoration Available'] },
+  suv: { features: ['Extra Space & Legroom', 'Family Drop-Only Trips', 'Weddings & family events'] },
   seven_seater: { features: ['Captain-seat comfort', 'Big families & luggage', 'Long outstation trips'] },
   traveller: { features: ['Pushback Seating', 'Baraats, Pilgrimages & Trips', 'Dual Drivers Long Routes'] }
 };
@@ -190,63 +192,53 @@ const fleetCard = (category) => ({
 
 const SERVICES = [
   {
-    id: 'wedding',
-    title: 'Wedding & Baraat Cars',
-    short: 'Decorated luxury cars for your big day',
-    description: "Fully decorated luxury sedans and SUVs with fresh floral arrangements and uniformed chauffeur. Muzaffarpur ka #1 wedding car service.",
-    price: '₹4,500',
-    priceNote: 'Sedan · 8 hrs / 150km · all inclusive',
-    features: ['Fresh Floral Decor', 'Uniformed Chauffeur', 'Sedan to Fortuner', '8 hrs / 150 km'],
-    image: img.wedding,
-    icon: Heart,
-    preset: { service: 'Wedding Car - Baraat / Bidai' }
-  },
-  {
     id: 'outstation',
-    title: 'Drop Only Cabs',
-    short: 'Drop Only & Round Trip cabs',
-    description: "Door-to-door AC cab service across Bihar with Sedan and SUV rates calculated from the selected road distance.",
-    price: (pricing) => perKmText(pricing, 'sedan'),
-    priceNote: () => 'One-way or round trip · all-inclusive price before you book',
-    features: ['Door-to-Door', 'Rate Shared Before Confirmation', 'Clean AC Cab', 'One Way & Round Trip'],
-    image: img.outstation,
+    title: 'Outstation Cabs',
+    short: 'One-way & round trip across Bihar',
+    description: 'Door-to-door AC cab to any city. The final price for your exact pickup and drop is shown before you book.',
+    features: ['One-way & round trip', 'Price shown upfront', 'Clean AC cabs'],
     icon: Car,
+    cta: 'Book outstation',
     preset: { service: 'Drop Only' }
   },
   {
     id: 'airport',
     title: 'Airport Transfer',
     short: 'Patna & Darbhanga airports · 24x7',
-    description: 'Muzaffarpur se Patna Airport (PAT) aur Darbhanga Airport (DBR) - flight tracking, on-time pickup, zero waiting. Early morning special available.',
-    price: (pricing) => perKmText(pricing, 'sedan'),
-    priceNote: () => 'Sedan · all-inclusive price before you book',
-    features: ['Flight Tracking', 'On-Time Guarantee', 'Early Morning Pickup', 'Both Airports'],
-    image: img.airport,
+    description: 'On-time pickup and drop for Patna (PAT) and Darbhanga (DBR) airports, including early-morning flights.',
+    features: ['On-time pickup', 'Early morning', 'Both airports'],
     icon: Plane,
+    cta: 'Book airport ride',
     preset: { service: 'Airport Transfer', route: { from: 'Muzaffarpur', to: 'Patna Airport' } }
   },
   {
+    id: 'wedding',
+    title: 'Wedding & Baraat Cars',
+    short: 'Sedan to Innova · price per car',
+    description: 'Book one or more cars for the baraat or bidai. Choose the car, date and venue; SadakYatra confirms each car.',
+    features: ['Several cars at once', 'Experienced chauffeurs', 'Package km & hours'],
+    icon: Heart,
+    cta: 'View wedding cars',
+    preset: { service: 'Wedding Car - Baraat / Bidai' }
+  },
+  {
     id: 'tempo',
-    title: 'Tempo Traveller Hire',
-    short: '12-26 seater for groups & pilgrimage',
-    description: 'Family trips, pilgrimage to Vaishali-Gaya-Bodh Gaya, baraat groups, corporate outings - 12 to 26 seater AC tempo with pushback seats.',
-    price: (pricing) => perKmText(pricing, 'traveller'),
-    priceNote: () => 'All-inclusive price shown before booking',
-    features: ['12-26 Seater', 'Pushback Seats', 'All Bihar Routes', 'Dual Drivers'],
-    image: img.tempo,
-    icon: Sparkles,
+    title: 'Tempo Traveller',
+    short: '12-26 seats for groups',
+    description: 'Family trips, pilgrimages and group outings in a pushback-seat AC tempo traveller.',
+    features: ['12-26 seats', 'Pushback seats', 'Long routes'],
+    icon: Users,
+    cta: 'Book tempo traveller',
     preset: { service: 'Drop Only', category: 'traveller' }
   },
   {
     id: 'local',
-    title: 'Local & Drop Only',
-    short: 'All routes across Bihar',
-    description: 'Muzaffarpur to Darbhanga, Sitamarhi, Motihari, Samastipur, Patna - sab routes cover. Local city rides bhi available. Instant taxi booking on WhatsApp.',
-    price: (pricing) => perKmText(pricing, 'sedan'),
-    priceNote: () => 'Sedan · all-inclusive price before you book',
-    features: ['All Bihar Routes', 'Local City Rides', 'Instant Booking', 'Same Driver Both Ways'],
-    image: img.outstation,
+    title: 'Local Rides',
+    short: 'Within Muzaffarpur city',
+    description: 'Quick rides around the city at a fixed local price for each car type.',
+    features: ['Fixed local price', 'Quick pickup', 'Any car type'],
     icon: MapPin,
+    cta: 'Book local ride',
     preset: { service: 'Local City Ride' }
   }
 ];
@@ -291,8 +283,7 @@ const PRESET_SERVICES = {
 
 const REVIEWS = [
   { name: 'Bright Nut', text: 'Car was clean, driver was friendly, and the ride felt very comfortable.', rating: 5 },
-  { name: 'Md Shahnawaz', text: 'Driver arrived on time, helped with luggage, and the car was clean.', rating: 5 },
-  { name: 'Anjali Singh', text: 'Booked a wedding car for baraat. Decoration was beautiful and professional.', rating: 5 }
+  { name: 'Md Shahnawaz', text: 'Driver arrived on time, helped with luggage, and the car was clean.', rating: 5 }
 ];
 
 const TABS = [
@@ -1021,7 +1012,7 @@ function QuickPills({ onStart }) {
   const pricing = usePricing();
   const pills = [
     { icon: Plane, label: 'Patna Airport', sub: 'Airport transfer', preset: { service: 'Airport Transfer', route: { from: 'Muzaffarpur', to: 'Patna Airport' } } },
-    { icon: Heart, label: 'Wedding Car', sub: 'from ₹4,500', preset: { service: 'Wedding Car - Baraat / Bidai' } },
+    { icon: Heart, label: 'Wedding Car', sub: 'Baraat & shaadi', preset: { service: 'Wedding Car - Baraat / Bidai' } },
     { icon: Briefcase, label: 'Drop Only', sub: 'price by distance', preset: { service: 'Drop Only' } },
     { icon: Users, label: 'Tempo Traveller', sub: '12-26 seats', preset: { category: 'traveller' } },
     { icon: MapPin, label: 'Darbhanga', sub: `Sedan ${perKmText(pricing, 'sedan')}`, preset: { service: 'Drop Only', route: { from: 'Muzaffarpur', to: 'Darbhanga' } } }
@@ -1112,48 +1103,49 @@ function FleetList({ compact = false, onSelect }) {
 }
 
 function ServicesScreen({ onStart }) {
-  const pricing = usePricing();
   return (
     <View>
-      <SectionTitle eyebrow="Every Need Covered" title="Services for every occasion" subtitle="From baraat entries to airport drops - across Muzaffarpur & Bihar." />
-      {SERVICES.map((service) => (
-        <Pressable key={service.id} onPress={() => onStart(service.preset)}>
-          <CardGradient style={styles.serviceArticle}>
-            <View style={styles.serviceImageWrap}>
-              <Image source={service.image} style={styles.serviceImage} />
-              <View style={styles.serviceShade} />
-              <View style={styles.serviceHeroText}>
-                <Text style={styles.serviceShortLabel}>{service.short}</Text>
-                <Text style={styles.serviceTitle}>{service.title}</Text>
-              </View>
-            </View>
-            <View style={styles.serviceBody}>
-              <Text style={styles.serviceDescription}>{service.description}</Text>
-              <View style={styles.serviceFeatureGrid}>
+      <SectionTitle eyebrow="Services" title="How can we help you travel?" subtitle="Every price is shown before you book and confirmed by SadakYatra." />
+      <View style={styles.serviceList}>
+        {SERVICES.map((service) => {
+          const Icon = service.icon;
+          return (
+            <View key={service.id} style={styles.serviceCard}>
+              <Pressable style={styles.serviceCardTop} onPress={() => onStart(service.preset)}>
+                <View style={styles.serviceIcon}><Icon color={colors.primaryForeground} size={22} strokeWidth={2.4} /></View>
+                <View style={styles.flex}>
+                  <Text style={styles.serviceCardTitle}>{service.title}</Text>
+                  <Text style={styles.serviceCardShort}>{service.short}</Text>
+                </View>
+                <ChevronRight color={colors.mutedForeground} size={20} />
+              </Pressable>
+              <Text style={styles.serviceCardText}>{service.description}</Text>
+              <View style={styles.serviceChips}>
                 {service.features.map((feature) => (
-                  <View key={feature} style={styles.serviceFeature}>
-                    <Check color={colors.primary} size={14} />
-                    <Text style={styles.serviceFeatureText}>{feature}</Text>
+                  <View key={feature} style={styles.serviceChip}>
+                    <Check color={colors.primary} size={13} />
+                    <Text style={styles.serviceChipText}>{feature}</Text>
                   </View>
                 ))}
               </View>
-              <View style={styles.serviceFooter}>
-                <View style={styles.flex}>
-                  <Text style={styles.servicePrice}>{typeof service.price === 'function' ? service.price(pricing) : service.price}</Text>
-                  <Text style={styles.priceUnit}>{typeof service.priceNote === 'function' ? service.priceNote(pricing) : service.priceNote}</Text>
-                </View>
-                <Pressable style={styles.callSquareSmall} accessibilityLabel={`Ask about ${service.title} on WhatsApp`}
-                  onPress={() => Linking.openURL(wa(`Hi ${BRAND.name}! I'm interested in ${service.title}. Please share details.`))}>
-                  <MessageCircle color={colors.whatsapp} size={20} />
+              <View style={styles.serviceActions}>
+                <Pressable style={styles.serviceBookButton} onPress={() => onStart(service.preset)}>
+                  <Text style={styles.serviceBookText}>{service.cta}</Text>
+                  <ArrowRight color={colors.primaryForeground} size={16} />
                 </Pressable>
-                <View style={styles.serviceBook}>
-                  <PrimaryButton label="Book" onPress={() => onStart(service.preset)} />
-                </View>
+                <Pressable
+                  style={styles.serviceAskButton}
+                  accessibilityLabel={`Ask about ${service.title} on WhatsApp`}
+                  onPress={() => Linking.openURL(wa(`Hi ${BRAND.name}! I'm interested in ${service.title}. Please share details.`))}
+                >
+                  <MessageCircle color={colors.whatsapp} size={18} />
+                  <Text style={styles.serviceAskText}>Ask</Text>
+                </Pressable>
               </View>
             </View>
-          </CardGradient>
-        </Pressable>
-      ))}
+          );
+        })}
+      </View>
     </View>
   );
 }
@@ -1395,7 +1387,7 @@ function BookScreen({ from, to, pickupLocation, dropLocation, tripType, carCateg
           <View style={styles.fareTotalRow}>
             <View>
               <Text style={styles.fareTotalLabel}>Final payable</Text>
-              <Text style={styles.fareTotalSub}>All-inclusive · no extra charges</Text>
+              <Text style={styles.fareTotalSub}>All-inclusive · paid in cash to the driver</Text>
             </View>
             <Text style={styles.fareTotalValue}>{rupees(fare.total)}</Text>
           </View>
@@ -1414,6 +1406,10 @@ function BookScreen({ from, to, pickupLocation, dropLocation, tripType, carCateg
           </Text>
         </BrandGradient>
       </Pressable>
+      <View style={styles.paymentRow}>
+        <Text style={styles.paymentLabel}>Payment</Text>
+        <Text style={styles.paymentValue}>Cash · pay the driver after your trip</Text>
+      </View>
       <Text style={styles.noHidden}>SadakYatra confirms your booking, then a driver is assigned</Text>
 
       <LocationPicker
@@ -1461,7 +1457,6 @@ function WeddingScreen({ onBooked }) {
   const [withReturn, setWithReturn] = useState(false);
   const [returnDate, setReturnDate] = useState(() => new Date(defaultEventDate().getTime() + 8 * 3600e3));
   const [count, setCount] = useState(1);
-  const [decoration, setDecoration] = useState(null);
   const [requirements, setRequirements] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
@@ -1477,7 +1472,6 @@ function WeddingScreen({ onBooked }) {
 
   function choose(vehicle) {
     setSelected(vehicle);
-    setDecoration(vehicle.decorationOptions[0] || null);
     setCount(1);
   }
 
@@ -1496,7 +1490,6 @@ function WeddingScreen({ onBooked }) {
         dropLongitude: venue.longitude,
         eventDatetime: eventDate.toISOString(),
         returnDatetime: withReturn ? returnDate.toISOString() : undefined,
-        decoration: decoration || undefined,
         requirements: requirements.trim() || undefined
       });
       Alert.alert('Wedding booking requested', `${result.groupRef} · ${count} × ${selected.name} · ${rupees(result.total)}\nSadakYatra will confirm and assign the car${count > 1 ? 's' : ''}.`);
@@ -1512,7 +1505,7 @@ function WeddingScreen({ onBooked }) {
   if (!selected) {
     return (
       <View>
-        <SectionTitle eyebrow="Wedding & Baraat" title="Decorated cars for your big day" subtitle="Choose a car, then tell us the date and venue. Prices are per car." />
+        <SectionTitle eyebrow="Wedding & Baraat" title="Cars for your big day" subtitle="Choose a car, then tell us the date and venue. Prices are per car." />
         {loadError ? <Text style={styles.quoteError}>{loadError}</Text> : null}
         {!vehicles && !loadError ? <Text style={styles.emptySub}>Loading wedding cars…</Text> : null}
         {(vehicles || []).map((vehicle) => (
@@ -1527,7 +1520,6 @@ function WeddingScreen({ onBooked }) {
                 <Text style={styles.rideMeta}>{vehicle.includedKm} km · {vehicle.includedHours} hours included · per car</Text>
                 <Text style={styles.rideMeta}>{vehicle.fuelPolicy}</Text>
                 <Text style={styles.rideMeta}>Extra: ₹{vehicle.extraKmRate}/km · ₹{vehicle.extraHourRate}/hour</Text>
-                {vehicle.decorationOptions.length ? <Text style={styles.weddingDecor}>Decoration: {vehicle.decorationOptions.join(' · ')}</Text> : null}
                 <View style={styles.weddingChoose}><PrimaryButton label="Choose this car" onPress={() => choose(vehicle)} /></View>
               </View>
             </CardGradient>
@@ -1564,21 +1556,9 @@ function WeddingScreen({ onBooked }) {
             <Pressable style={styles.stepperButton} onPress={() => setCount(Math.min(10, count + 1))}><Text style={styles.stepperText}>+</Text></Pressable>
           </View>
         </View>
-        {selected.decorationOptions.length ? (
-          <View style={styles.fieldBox}>
-            <Text style={styles.fieldLabel}>Decoration</Text>
-            <View style={styles.chipWrap}>
-              {[...selected.decorationOptions, null].map((option) => (
-                <Pressable key={option || 'none'} onPress={() => setDecoration(option)} style={[styles.selectPill, decoration === option && styles.selectPillActive]}>
-                  <Text style={[styles.selectText, decoration === option && styles.selectTextActive]}>{option || 'No decoration'}</Text>
-                </Pressable>
-              ))}
-            </View>
-          </View>
-        ) : null}
         <View style={styles.fieldBox}>
           <Text style={styles.fieldLabel}>Other requirements (optional)</Text>
-          <TextInput value={requirements} onChangeText={setRequirements} placeholder="e.g. white ribbons, driver in uniform" placeholderTextColor={colors.placeholder} style={styles.fieldInput} multiline />
+          <TextInput value={requirements} onChangeText={setRequirements} placeholder="e.g. white car, driver in uniform" placeholderTextColor={colors.placeholder} style={styles.fieldInput} multiline />
         </View>
         <View style={styles.fareTotalRow}>
           <View>
@@ -1594,6 +1574,10 @@ function WeddingScreen({ onBooked }) {
           <Text style={styles.whatsappText}>{submitting ? 'Requesting…' : `Request ${count} car${count > 1 ? 's' : ''} · ${rupees(selected.price * count)}`}</Text>
         </BrandGradient>
       </Pressable>
+      <View style={styles.paymentRow}>
+        <Text style={styles.paymentLabel}>Payment</Text>
+        <Text style={styles.paymentValue}>Cash · pay the driver</Text>
+      </View>
       <Text style={styles.noHidden}>SadakYatra confirms your booking, then assigns the car{count > 1 ? 's' : ''}</Text>
       <LocationPicker
         visible={Boolean(pickerTarget)}
@@ -1665,7 +1649,7 @@ function BookingsScreen({ phone, bookings, loading, error, selectedBooking, trac
           </View>
           <Text style={styles.bookingMeta}>
             {selectedBooking.trip_type === 'WEDDING'
-              ? `Wedding · ${selectedBooking.wedding_vehicle_name || 'Wedding car'}${selectedBooking.group_size > 1 ? ` · car ${selectedBooking.group_index} of ${selectedBooking.group_size}` : ''}${selectedBooking.decoration ? ` · ${selectedBooking.decoration}` : ''}`
+              ? `Wedding · ${selectedBooking.wedding_vehicle_name || 'Wedding car'}${selectedBooking.group_size > 1 ? ` · car ${selectedBooking.group_index} of ${selectedBooking.group_size}` : ''}`
               : TRIP_TYPE_LABELS[selectedBooking.trip_type] || 'Trip'} · {formatFriendlyDate(new Date(selectedBooking.trip_datetime))}{selectedBooking.trip_type === 'WEDDING' ? '' : ` · ${categoryLabel(pricing, selectedBooking.car_category)}`}
             {selectedBooking.route_distance_km ? ` · ${selectedBooking.route_distance_km} km` : ''}
           </Text>
@@ -1939,41 +1923,47 @@ function PinField({ label, value, onPress }) {
   );
 }
 
+// Ola/Uber style: the pin stays in the centre and the customer moves the map under it.
 function LocationPicker({ visible, title, value, initialLocation, onClose, onSelect }) {
   const { height } = useWindowDimensions();
   const insets = useSafeAreaInsets();
   const [locating, setLocating] = useState(false);
   const mapRef = useRef(null);
   const [query, setQuery] = useState(value || '');
-  const [selectedLocation, setSelectedLocation] = useState(initialLocation || {
-    label: 'Muzaffarpur', latitude: 26.1209, longitude: 85.391
-  });
+  const [selectedLocation, setSelectedLocation] = useState(initialLocation || DEFAULT_PIN);
   const [results, setResults] = useState([]);
   const [searching, setSearching] = useState(false);
   const [searchError, setSearchError] = useState(null);
+  const [resolving, setResolving] = useState(false);
+  // A fresh map each time the picker opens, so it always starts at the right place.
+  const [openCount, setOpenCount] = useState(0);
+  // Where we moved the map ourselves (opening, search result): stopping there keeps that place's name.
+  const namedSpotRef = useRef(null);
+  const lookupRef = useRef(0);
 
   useEffect(() => {
     if (!visible) return;
-    const point = initialLocation || { label: value || 'Muzaffarpur', latitude: 26.1209, longitude: 85.391 };
+    const point = initialLocation || DEFAULT_PIN;
+    namedSpotRef.current = point;
     setQuery(value || point.label || '');
-    setSelectedLocation(point);
+    setSelectedLocation({ label: value || point.label, latitude: point.latitude, longitude: point.longitude });
     setResults([]);
     setSearchError(null);
-    mapRef.current?.animateToRegion({ latitude: point.latitude, longitude: point.longitude, latitudeDelta: 0.07, longitudeDelta: 0.07 });
-  }, [visible, initialLocation, value]);
+    setOpenCount((count) => count + 1);
+  }, [visible]);
 
   async function searchPlaces() {
     if (!query.trim()) return;
     setSearching(true);
     setSearchError(null);
     try {
-      const near = selectedLocation || { latitude: 26.12, longitude: 85.39 };
+      const near = selectedLocation || DEFAULT_PIN;
       const url = `https://photon.komoot.io/api/?q=${encodeURIComponent(`${query.trim()}, India`)}&lat=${near.latitude}&lon=${near.longitude}&limit=8`;
       const response = await fetch(url);
       if (!response.ok) throw new Error('Location search is temporarily unavailable.');
       const data = await response.json();
       setResults(data.features || []);
-      if (!data.features?.length) setSearchError('No matching places found. Move the map and place the pin manually.');
+      if (!data.features?.length) setSearchError('No matching places found. Move the map to place the pin yourself.');
     } catch (error) {
       setSearchError(error.message || 'Location search is temporarily unavailable.');
     } finally {
@@ -1985,31 +1975,44 @@ function LocationPicker({ visible, title, value, initialLocation, onClose, onSel
     return [...new Set([properties.name, properties.street, properties.city, properties.district, properties.state].filter(Boolean))].slice(0, 3).join(', ');
   }
 
-  function chooseFeature(feature) {
-    const [longitude, latitude] = feature.geometry.coordinates;
-    const location = { label: labelForFeature(feature.properties) || 'Pinned location', latitude, longitude };
-    setSelectedLocation(location);
-    setQuery(location.label);
-    setResults([]);
-    mapRef.current?.animateToRegion({ latitude, longitude, latitudeDelta: 0.025, longitudeDelta: 0.025 }, 350);
+  function moveMapTo(latitude, longitude, delta = 0.01) {
+    namedSpotRef.current = { latitude, longitude };
+    mapRef.current?.animateToRegion({ latitude, longitude, latitudeDelta: delta, longitudeDelta: delta }, 400);
   }
 
-  async function setMapPin(coordinate) {
-    const location = { label: 'Pinned location', latitude: coordinate.latitude, longitude: coordinate.longitude };
-    setSelectedLocation(location);
+  function chooseFeature(feature) {
+    const [longitude, latitude] = feature.geometry.coordinates;
+    const label = labelForFeature(feature.properties) || 'Pinned location';
+    setSelectedLocation({ label, latitude, longitude });
+    setQuery(label);
+    setResults([]);
+    moveMapTo(latitude, longitude);
+  }
+
+  // The map stopped moving: the centre is the new pin; look up its address unless we just chose a named place.
+  async function onCentreChanged(region) {
+    const point = { latitude: region.latitude, longitude: region.longitude };
+    const named = namedSpotRef.current;
+    if (named && Math.abs(named.latitude - point.latitude) < 0.0003 && Math.abs(named.longitude - point.longitude) < 0.0003) {
+      setSelectedLocation((current) => ({ ...current, ...point }));
+      return;
+    }
+    namedSpotRef.current = null;
+    const lookup = ++lookupRef.current;
+    setSelectedLocation({ label: 'Finding address…', ...point });
+    setResolving(true);
     try {
-      const response = await fetch(`https://photon.komoot.io/reverse?lon=${coordinate.longitude}&lat=${coordinate.latitude}`);
+      const response = await fetch(`https://photon.komoot.io/reverse?lon=${point.longitude}&lat=${point.latitude}`);
       const data = await response.json();
       const properties = data.features?.[0]?.properties;
-      if (properties) {
-        const label = labelForFeature(properties);
-        if (label) {
-          setSelectedLocation({ ...location, label });
-          setQuery(label);
-        }
-      }
+      const label = (properties && labelForFeature(properties)) || 'Pinned location';
+      if (lookup !== lookupRef.current) return; // the map moved again meanwhile
+      setSelectedLocation({ label, ...point });
+      setQuery(label);
     } catch {
-      setQuery('Pinned location');
+      if (lookup === lookupRef.current) setSelectedLocation({ label: 'Pinned location', ...point });
+    } finally {
+      if (lookup === lookupRef.current) setResolving(false);
     }
   }
 
@@ -2018,10 +2021,10 @@ function LocationPicker({ visible, title, value, initialLocation, onClose, onSel
     setSearchError(null);
     try {
       const permission = await Location.requestForegroundPermissionsAsync();
-      if (permission.status !== 'granted') throw new Error('Allow location access, or search / move the pin instead.');
-      const { coords } = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
-      mapRef.current?.animateToRegion({ latitude: coords.latitude, longitude: coords.longitude, latitudeDelta: 0.012, longitudeDelta: 0.012 }, 350);
-      await setMapPin(coords);
+      if (permission.status !== 'granted') throw new Error('Allow location access, or search / move the map instead.');
+      const { coords } = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
+      namedSpotRef.current = null;
+      mapRef.current?.animateToRegion({ latitude: coords.latitude, longitude: coords.longitude, latitudeDelta: 0.008, longitudeDelta: 0.008 }, 400);
     } catch (error) {
       setSearchError(error.message || 'Could not get your location.');
     } finally {
@@ -2029,13 +2032,14 @@ function LocationPicker({ visible, title, value, initialLocation, onClose, onSel
     }
   }
 
+  const mapHeight = Math.max(280, height * 0.5);
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
       <View style={[styles.locationPicker, { paddingTop: insets.top + 8, paddingBottom: insets.bottom }]}>
         <View style={styles.locationPickerHeader}>
           <View style={styles.flex}>
             <Text style={styles.locationPickerTitle}>{title}</Text>
-            <Text style={styles.locationPickerSubtitle}>Search, or tap / drag the pin to the exact spot.</Text>
+            <Text style={styles.locationPickerSubtitle}>Search, or move the map so the pin sits on the exact spot.</Text>
           </View>
           <Pressable style={styles.pickerClose} onPress={onClose} accessibilityLabel="Close map">
             <Text style={styles.pickerCloseText}>Close</Text>
@@ -2070,23 +2074,29 @@ function LocationPicker({ visible, title, value, initialLocation, onClose, onSel
           <Text style={styles.currentLocationText}>{locating ? 'Finding you…' : 'Use my current location'}</Text>
         </Pressable>
         {searchError ? <Text style={styles.searchError}>{searchError}</Text> : null}
-        <MapView
-          ref={mapRef}
-          style={[styles.locationMap, { height: Math.max(260, height * 0.48) }]}
-          initialRegion={{ latitude: selectedLocation.latitude, longitude: selectedLocation.longitude, latitudeDelta: 0.07, longitudeDelta: 0.07 }}
-          onPress={(event) => setMapPin(event.nativeEvent.coordinate)}
-        >
-          <Marker
-            coordinate={{ latitude: selectedLocation.latitude, longitude: selectedLocation.longitude }}
-            draggable
-            title={selectedLocation.label}
-            onDragEnd={(event) => setMapPin(event.nativeEvent.coordinate)}
+        <View style={{ height: mapHeight }}>
+          <MapView
+            key={openCount}
+            ref={mapRef}
+            style={styles.locationMapFill}
+            initialRegion={{ latitude: selectedLocation.latitude, longitude: selectedLocation.longitude, latitudeDelta: 0.012, longitudeDelta: 0.012 }}
+            onRegionChangeComplete={onCentreChanged}
+            showsUserLocation
           />
-        </MapView>
+          <View pointerEvents="none" style={styles.centerPinWrap}>
+            <View style={styles.centerPinHead}><MapPin color={colors.primaryForeground} size={22} strokeWidth={2.6} /></View>
+            <View style={styles.centerPinStem} />
+            <View style={styles.centerPinShadow} />
+          </View>
+        </View>
         <View style={styles.pinConfirmRow}>
           <Text style={styles.pinCoords} numberOfLines={2}>{selectedLocation.label}</Text>
-          <Pressable style={styles.pinConfirmButton} onPress={() => onSelect(selectedLocation)}>
-            <Text style={styles.pinConfirmText}>Use this pin</Text>
+          <Pressable
+            style={[styles.pinConfirmButton, resolving && styles.pinConfirmDisabled]}
+            onPress={() => onSelect(selectedLocation)}
+            disabled={resolving}
+          >
+            <Text style={styles.pinConfirmText}>{resolving ? 'Wait…' : 'Use this pin'}</Text>
           </Pressable>
         </View>
       </View>
@@ -2133,9 +2143,9 @@ function WeddingPromo({ onPress }) {
         <View style={styles.weddingGlow} />
         <View style={styles.weddingContent}>
           <View style={styles.weddingBadge}><Sparkles color={colors.primary} size={12} /><Text style={styles.weddingLabel}>Wedding Season</Text></View>
-          <Text style={styles.weddingTitle}>Decorated baraat cars from <Text style={styles.yellowText}>₹4,500</Text></Text>
-          <Text style={styles.weddingSub}>Fresh florals · uniformed chauffeur · sedan to Fortuner</Text>
-          <View style={styles.viewPackages}><Text style={styles.viewPackagesText}>View packages</Text><ArrowUpRight color={colors.primary} size={16} /></View>
+          <Text style={styles.weddingTitle}>Cars for your <Text style={styles.yellowText}>wedding & baraat</Text></Text>
+          <Text style={styles.weddingSub}>Sedan to Innova · experienced chauffeur · price per car</Text>
+          <View style={styles.viewPackages}><Text style={styles.viewPackagesText}>View cars</Text><ArrowUpRight color={colors.primary} size={16} /></View>
         </View>
       </CardGradient>
     </Pressable>
@@ -2262,6 +2272,30 @@ const colors = {
 };
 
 const styles = StyleSheet.create({
+  locationMapFill: { ...StyleSheet.absoluteFillObject },
+  centerPinWrap: { position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, alignItems: 'center', justifyContent: 'center', paddingBottom: 44 },
+  centerPinHead: { width: 40, height: 40, borderRadius: 20, backgroundColor: '#FFCC00', alignItems: 'center', justifyContent: 'center', borderWidth: 3, borderColor: '#0A0A0A' },
+  centerPinStem: { width: 3, height: 14, backgroundColor: '#0A0A0A' },
+  centerPinShadow: { width: 12, height: 5, borderRadius: 6, backgroundColor: 'rgba(0,0,0,0.35)' },
+  pinConfirmDisabled: { opacity: 0.5 },
+  serviceList: { marginHorizontal: 16, gap: 12 },
+  serviceCard: { borderRadius: 18, borderWidth: 1, borderColor: '#2E2E2E', backgroundColor: '#141414', padding: 16 },
+  serviceCardTop: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  serviceIcon: { width: 46, height: 46, borderRadius: 14, backgroundColor: '#FFCC00', alignItems: 'center', justifyContent: 'center' },
+  serviceCardTitle: { color: '#FFFFFF', fontSize: 17, fontWeight: '900' },
+  serviceCardShort: { color: '#FFCC00', fontSize: 12, fontWeight: '700', marginTop: 2 },
+  serviceCardText: { color: '#B8B8B8', fontSize: 13, lineHeight: 19, marginTop: 12 },
+  serviceChips: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 12 },
+  serviceChip: { flexDirection: 'row', alignItems: 'center', gap: 4, borderRadius: 999, borderWidth: 1, borderColor: '#2E2E2E', paddingHorizontal: 10, paddingVertical: 5 },
+  serviceChipText: { color: '#FFFFFF', fontSize: 11, fontWeight: '700' },
+  serviceActions: { flexDirection: 'row', gap: 10, marginTop: 14 },
+  serviceBookButton: { flex: 1, minHeight: 46, borderRadius: 12, backgroundColor: '#FFCC00', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6 },
+  serviceBookText: { color: '#0A0A0A', fontSize: 14, fontWeight: '900' },
+  serviceAskButton: { minHeight: 46, paddingHorizontal: 16, borderRadius: 12, borderWidth: 1, borderColor: '#2E2E2E', flexDirection: 'row', alignItems: 'center', gap: 6 },
+  serviceAskText: { color: '#FFFFFF', fontSize: 13, fontWeight: '800' },
+  paymentRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginHorizontal: 16, marginTop: 12, padding: 12, borderRadius: 12, borderWidth: 1, borderColor: '#2E2E2E' },
+  paymentLabel: { color: '#9A9A9A', fontSize: 12, fontWeight: '700' },
+  paymentValue: { color: '#FFFFFF', fontSize: 13, fontWeight: '800' },
   tripTabs: { flexDirection: 'row', marginHorizontal: 16, marginTop: 16, padding: 4, borderRadius: 16, backgroundColor: '#1C1C1C', borderWidth: 1, borderColor: '#2E2E2E' },
   tripTab: { flex: 1, minHeight: 44, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
   tripTabActive: { backgroundColor: '#FFCC00' },

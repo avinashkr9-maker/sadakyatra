@@ -97,11 +97,10 @@ const appConfig = {
     },
     {
       q: 'Do you support wedding packages?',
-      a: 'Yes. Wedding package starts around Rs 4500 and includes decoration and chauffeur.'
+      a: 'Yes. Choose a wedding car in the app; the price is per car and includes the chauffeur and package km/hours.'
     }
   ],
   testimonials: [
-    { name: 'Arvind Singh', rating: 5, text: 'Wedding car was decorated and arrived on time. Highly recommended.' },
     { name: 'Pooja Verma', rating: 5, text: 'Drop Only trip was smooth and driver was punctual and professional.' },
     { name: 'Ravi Thakur', rating: 5, text: 'Transparent rates, clean car, and safe experience.' }
   ]
@@ -1390,7 +1389,8 @@ app.get('/driver/bookings', requireDriver, handle(async (req, res) => {
       .filter((booking) => inServiceArea(booking, req.driver))
       .map(offerView);
   }
-  res.json({ bookings: bookings.map(driverView), offers });
+  // Customers pay cash to the driver, so an accepted trip shows how much to collect.
+  res.json({ bookings: bookings.map((trip) => ({ ...driverView(trip), cash_to_collect: trip.estimated_fare })), offers });
 }));
 
 app.patch('/driver/bookings/:id/response', requireDriver, handle(async (req, res) => {

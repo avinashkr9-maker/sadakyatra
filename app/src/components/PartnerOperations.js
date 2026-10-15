@@ -331,6 +331,7 @@ export function DriverDashboard() {
           <Text style={styles.itemText}>Drop: {trip.drop_text}</Text>
           <Text style={styles.itemText}>{formatPickupTime(trip.trip_datetime)} · {CATEGORY_LABELS[trip.car_category] || trip.car_category}</Text>
           <TripTypeLine trip={trip} />
+          {trip.cash_to_collect ? <Text style={styles.collect}>Collect in cash from customer: {rupee(trip.cash_to_collect)}</Text> : null}
           {trip.driver_payout ? <Text style={styles.payout}>You earn {rupee(trip.driver_payout)}</Text> : null}
           <Pressable onPress={() => Linking.openURL(`tel:${trip.customer_phone}`)}>
             <Text style={styles.callLink}>Customer: {trip.customer_name || 'Customer'} · Call +91 {trip.customer_phone}</Text>
@@ -937,6 +938,7 @@ const styles = StyleSheet.create({
   navAddress: { color: palette.text, fontSize: 16, fontWeight: '800', marginTop: 4 },
   navEta: { color: palette.text, fontSize: 22, fontWeight: '900', marginTop: 6 },
   navBottom: { position: 'absolute', bottom: 24, left: 12, right: 12, borderRadius: 16, backgroundColor: palette.elevated, borderWidth: 1, borderColor: palette.border, padding: 12, paddingBottom: 2 },
+  collect: { color: palette.primary, fontSize: 14, fontWeight: '900', marginTop: 6 },
   payout: { color: '#4CC157', fontSize: 15, fontWeight: '900', marginTop: 6 },
   adminTabs: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 4, marginBottom: 6 },
   adminTab: { paddingHorizontal: 14, paddingVertical: 9, borderRadius: 18, borderWidth: 1, borderColor: palette.border },

@@ -59,6 +59,16 @@
     },
     "owner": "sadakyatra",
     "userInterfaceStyle": "dark",
-    "backgroundColor": "#0A0A0A"
+    "backgroundColor": "#0A0A0A",
+    "ios": {
+      "bundleIdentifier": "com.sadakyatra.app",
+      "supportsTablet": false,
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false,
+        "NSLocationWhenInUseUsageDescription": "SadakYatra uses your location to set the pickup point and, for drivers, to receive nearby bookings and show the route.",
+        "NSCameraUsageDescription": "SadakYatra uses the camera to photograph vehicle documents.",
+        "NSPhotoLibraryUsageDescription": "SadakYatra needs your photos to upload vehicle documents and car pictures."
+      }
+    }
   }
 }

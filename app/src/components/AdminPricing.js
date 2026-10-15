@@ -270,8 +270,6 @@ function WeddingCarEditor({ car, categories, onSaved, onMessage }) {
           </View>
           <Text style={styles.numberLabel}>Fuel policy</Text>
           <TextInput value={draft.fuel_policy} onChangeText={(value) => update('fuel_policy', value)} style={styles.input} placeholderTextColor={palette.muted} />
-          <Text style={styles.numberLabel}>Decoration options (comma separated)</Text>
-          <TextInput value={draft.decoration_options} onChangeText={(value) => update('decoration_options', value)} placeholder="Simple flowers, Full floral decoration" style={styles.input} placeholderTextColor={palette.muted} />
           <View style={styles.switchRow}>
             <Text style={styles.meta}>Show to customers</Text>
             <Switch value={car.active} onValueChange={(active) => save({ active })} trackColor={{ true: palette.primary }} />
