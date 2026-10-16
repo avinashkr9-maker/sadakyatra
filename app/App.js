@@ -6,7 +6,6 @@ import {
   Linking,
   Modal,
   Platform,
-  Pressable,
   KeyboardAvoidingView,
   RefreshControl,
   ScrollView,
@@ -17,6 +16,7 @@ import {
   useWindowDimensions,
   View
 } from 'react-native';
+import { Pressable, largerText } from './src/ui';
 import MapView, { Marker, Polyline } from 'react-native-maps';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Location from 'expo-location';
@@ -2271,7 +2271,7 @@ const colors = {
   black: '#0A0A0A'
 };
 
-const styles = StyleSheet.create({
+const styles = StyleSheet.create(largerText({
   locationMapFill: { ...StyleSheet.absoluteFillObject },
   centerPinWrap: { position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, alignItems: 'center', justifyContent: 'center', paddingBottom: 44 },
   centerPinHead: { width: 40, height: 40, borderRadius: 20, backgroundColor: '#FFCC00', alignItems: 'center', justifyContent: 'center', borderWidth: 3, borderColor: '#0A0A0A' },
@@ -2783,4 +2783,4 @@ const styles = StyleSheet.create({
   apiButtonSecondary: { flex: 1, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border, padding: 12, borderRadius: 8, alignItems: 'center' },
   apiButtonText: { color: colors.primaryForeground, fontSize: 14, fontWeight: '600' },
   apiButtonTextSecondary: { color: colors.text, fontSize: 14, fontWeight: '600' }
-});
+}));

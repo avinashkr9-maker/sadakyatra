@@ -7,7 +7,7 @@ import {
   UploadError, WEDDING_CARS_BUCKET, getPartnerDocumentsBucket, getSupabaseAdmin, publicUrl, readUpload, signedUrl, uploadObject
 } from './supabase.js';
 import {
-  OtpUnavailableError, STAFF_PERMISSIONS, authenticate, describeTestNumbers, endOtherSessions, isOwnerPhone, passwordProblem, setPassword, verifyPassword, checkOtp, createSession, endSession, findOrCreateUser,
+  OtpUnavailableError, STAFF_PERMISSIONS, authenticate, clearAccountCache, describeTestNumbers, endOtherSessions, isOwnerPhone, passwordProblem, setPassword, verifyPassword, checkOtp, createSession, endSession, findOrCreateUser,
   grantRole, isValidIndianPhone, loadAccount, loginWithPhone, normalizePhone, requestOtp, requireLogin, requireStaff
 } from './auth.js';
 import { CHANNELS, notifyStaff, notifyUsers } from './notify.js';
@@ -22,6 +22,12 @@ const nano = customAlphabet('0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ', 8);
 app.use(cors());
 app.use(express.json({ limit: '8mb' }));
 app.use(authenticate);
+// Logins, roles and names only change through these endpoints: forget remembered accounts after any change there.
+const ACCOUNT_CHANGING_PATHS = ['/auth/', '/me', '/admin/', '/partners/'];
+app.use((req, res, next) => {
+  if (req.method !== 'GET' && ACCOUNT_CHANGING_PATHS.some((path) => req.path.startsWith(path))) res.on('finish', clearAccountCache);
+  next();
+});
 
 const validServiceTypes = new Set(['OUTSTATION', 'AIRPORT', 'WEDDING', 'LOCAL']);
 const gpsWebhookSecret = process.env.GPS_WEBHOOK_SECRET || '';
@@ -55,9 +61,10 @@ function rateLimit(name, max, windowMs, keyOf = (req) => req.ip) {
 const requireDriver = handle(async (req, res, next) => {
   if (!req.account) return res.status(401).json({ error: 'Please log in again.' });
   const driver = await one(`
-    SELECT d.*, p.active AS partner_active
+    SELECT d.*, p.active AS partner_active, to_jsonb(v.*) AS cab
     FROM drivers d
     JOIN partners p ON p.id = d.partner_id
+    LEFT JOIN vehicles v ON v.driver_id = d.id
     WHERE d.user_id = $1
   `, [req.account.id]);
   if (!driver) return res.status(403).json({ error: 'No approved cab is linked to this number yet.' });
@@ -1348,10 +1355,9 @@ app.post('/driver/location', requireDriver, handle(async (req, res) => {
   res.json({ latitude, longitude, updatedAt: new Date().toISOString() });
 }));
 
-const driverCab = (driverId) => one('SELECT * FROM vehicles WHERE driver_id = $1', [driverId]);
 
 app.get('/driver/me', requireDriver, handle(async (req, res) => {
-  const cab = await one('SELECT cab_ref, plate_no, category, model FROM vehicles WHERE driver_id = $1', [req.driver.id]);
+  const cab = req.driver.cab && { cab_ref: req.driver.cab.cab_ref, plate_no: req.driver.cab.plate_no, category: req.driver.cab.category, model: req.driver.cab.model };
   res.json({ driver: { name: req.driver.driver_name, phone: req.driver.phone, online: Boolean(req.driver.is_online), cab } });
 }));
 
@@ -1371,7 +1377,7 @@ app.get('/driver/bookings', requireDriver, handle(async (req, res) => {
     WHERE b.driver_id = $1 AND b.status IN ('CONFIRMED','ONGOING')
     ORDER BY b.trip_datetime ASC
   `, [req.driver.id]);
-  const cab = await driverCab(req.driver.id);
+  const cab = req.driver.cab;
   let offers = [];
   if (req.driver.is_online && cab?.active) {
     offers = (await query(`
@@ -1412,7 +1418,7 @@ app.patch('/driver/bookings/:id/response', requireDriver, handle(async (req, res
   }
 
   // First driver to get here wins: the booking row lock lets only one acceptance through.
-  const cab = await driverCab(req.driver.id);
+  const cab = req.driver.cab;
   if (!cab?.active) return res.status(409).json({ error: 'Your cab is paused. Please call SadakYatra.' });
   if (!req.driver.is_online) return res.status(409).json({ error: 'Go online to accept bookings' });
   try {

@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
-import { Alert, Image, Pressable, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
+import { Alert, Image, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
+import { Pressable, largerText } from '../ui';
 import { apiRequest } from '../api/client';
 import { pickPhoto } from '../pickPhoto';
 
@@ -384,7 +385,7 @@ export default function AdminPricing() {
 
 const palette = { surface: '#141414', elevated: '#1C1C1C', border: '#2E2E2E', text: '#FFFFFF', muted: '#9A9A9A', primary: '#FFCC00', primaryText: '#0A0A0A' };
 
-const styles = StyleSheet.create({
+const styles = StyleSheet.create(largerText({
   flex: { flex: 1 },
   heading: { color: palette.text, fontSize: 15, fontWeight: '900', marginTop: 18, marginBottom: 6 },
   card: { borderRadius: 14, borderWidth: 1, borderColor: palette.border, backgroundColor: palette.elevated, padding: 12, marginTop: 10 },
@@ -410,4 +411,4 @@ const styles = StyleSheet.create({
   chipActive: { backgroundColor: palette.primary, borderColor: palette.primary },
   chipText: { color: palette.text, fontSize: 12, fontWeight: '700' },
   chipTextActive: { color: palette.primaryText }
-});
+}));

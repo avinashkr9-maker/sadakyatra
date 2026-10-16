@@ -1,7 +1,19 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
-  ActivityIndicator, Alert, Image, KeyboardAvoidingView, Linking, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View
+  ActivityIndicator,
+  Alert,
+  Image,
+  KeyboardAvoidingView,
+  Linking,
+  Modal,
+  Platform,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  View
 } from 'react-native';
+import { Pressable, largerText } from '../ui';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Car, ChevronLeft, ChevronRight, Clock, Phone, ShieldCheck, User, Users } from 'lucide-react-native';
 import { changePassword, getMe, loginWithPassword, signup, submitPartnerApplication, updateMe, uploadPartnerDocument } from '../api/client';
@@ -505,7 +517,7 @@ export function LoadingScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const styles = StyleSheet.create(largerText({
   screen: { flex: 1, backgroundColor: brand.black },
   content: { paddingHorizontal: 20, paddingTop: 24 },
   flex: { flex: 1 },
@@ -585,4 +597,4 @@ const styles = StyleSheet.create({
   switchChipActive: { backgroundColor: brand.yellow, borderColor: brand.yellow },
   switchText: { color: brand.white, fontSize: 13, fontWeight: '700' },
   switchTextActive: { color: brand.black, fontWeight: '900' }
-});
+}));

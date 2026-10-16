@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Alert, Linking, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Alert, Linking, Modal, Platform, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Pressable, largerText } from '../ui';
 import * as Location from 'expo-location';
 import MapView, { Marker, Polyline } from 'react-native-maps';
 import { apiRequest } from '../api/client';
@@ -880,7 +881,7 @@ const palette = {
   error: '#F08080'
 };
 
-const styles = StyleSheet.create({
+const styles = StyleSheet.create(largerText({
   section: { marginTop: 20, marginHorizontal: 16, marginBottom: 24, padding: 14, borderRadius: 18, borderWidth: 1, borderColor: palette.border, backgroundColor: palette.surface },
   title: { color: palette.text, fontSize: 20, fontWeight: '900' },
   subtitle: { color: palette.muted, fontSize: 12, marginTop: 4, marginBottom: 12 },
@@ -949,4 +950,4 @@ const styles = StyleSheet.create({
   overviewTile: { minWidth: 92, flexGrow: 1, borderRadius: 12, borderWidth: 1, borderColor: palette.border, backgroundColor: palette.elevated, paddingVertical: 10, paddingHorizontal: 10 },
   overviewValue: { color: palette.primary, fontSize: 20, fontWeight: '900' },
   overviewLabel: { color: palette.muted, fontSize: 10, fontWeight: '700', marginTop: 2 }
-});
+}));

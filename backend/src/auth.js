@@ -179,10 +179,20 @@ export async function loginWithPhone(phone) {
   });
 }
 
+// One round trip: the user plus their roles.
+const ACCOUNT_SQL = `
+  SELECT u.id, u.full_name, u.phone, u.email,
+    COALESCE(json_agg(json_build_object('role', r.role, 'permissions', r.permissions)) FILTER (WHERE r.role IS NOT NULL), '[]') AS role_rows
+  FROM users u LEFT JOIN user_roles r ON r.user_id = u.id
+`;
+
 export async function loadAccount(userId) {
-  const user = await one('SELECT id, full_name, phone, email FROM users WHERE id = $1', [userId]);
-  if (!user) return null;
-  const roleRows = await query('SELECT role, permissions FROM user_roles WHERE user_id = $1', [userId]);
+  const row = await one(`${ACCOUNT_SQL} WHERE u.id = $1 GROUP BY u.id`, [userId]);
+  return row ? buildAccount(row) : null;
+}
+
+function buildAccount(user) {
+  const roleRows = user.role_rows;
   const roles = roleRows.map((row) => row.role);
   const isOwner = roles.includes('owner');
   const permissions = isOwner
@@ -201,13 +211,38 @@ export async function loadAccount(userId) {
 
 const bearer = (req) => req.get('authorization')?.replace(/^Bearer\s+/i, '') || '';
 
+// Logged-in accounts are remembered briefly so most taps skip the database.
+// Anything that changes sessions or roles clears it (clearAccountCache).
+const ACCOUNT_CACHE_MS = 30_000;
+const accountCache = new Map();
+
+export function clearAccountCache() {
+  accountCache.clear();
+}
+
 // Attaches req.account when a valid session token is sent; never rejects on its own.
 export async function authenticate(req, _res, next) {
   try {
     const token = bearer(req);
     if (token) {
-      const session = await one('SELECT user_id FROM sessions WHERE token_hash = $1 AND expires_at > now()', [sha256(token)]);
-      if (session) req.account = await loadAccount(session.user_id);
+      const tokenHash = sha256(token);
+      const cached = accountCache.get(tokenHash);
+      if (cached && Date.now() - cached.at < ACCOUNT_CACHE_MS) {
+        req.account = cached.account;
+      } else {
+        const row = await one(`
+          ${ACCOUNT_SQL}
+          JOIN sessions s ON s.user_id = u.id AND s.token_hash = $1 AND s.expires_at > now()
+          GROUP BY u.id
+        `, [tokenHash]);
+        req.account = row ? buildAccount(row) : undefined;
+        if (row) {
+          if (accountCache.size > 5000) accountCache.clear();
+          accountCache.set(tokenHash, { account: req.account, at: Date.now() });
+        } else {
+          accountCache.delete(tokenHash);
+        }
+      }
     }
     next();
   } catch (error) {
