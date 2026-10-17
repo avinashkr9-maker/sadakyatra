@@ -32,7 +32,8 @@ const CATEGORY_FIELDS = [
 const SETTING_FIELDS = [
   ['toll_per_km', 'Toll & parking ₹ per km'],
   ['gst_percent', 'GST %'],
-  ['commission_percent', 'SadakYatra commission %']
+  ['commission_percent', 'SadakYatra commission %'],
+  ['round_trip_multiplier', 'Round trip = one-way × (0 = use per-km rates)']
 ];
 
 const asText = (value) => (value == null ? '' : String(value));

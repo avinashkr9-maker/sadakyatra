@@ -757,7 +757,8 @@ const CATEGORY_NUMBERS = {
   base_fare: [0, 100000], per_km: [1, 1000], min_fare: [0, 1000000], local_fare: [0, 1000000],
   rt_per_km: [1, 1000], rt_min_km_per_day: [0, 2000], driver_allowance: [0, 100000], sort_order: [0, 10000]
 };
-const SETTING_NUMBERS = { toll_per_km: [0, 100], gst_percent: [0, 50], commission_percent: [0, 90] };
+// round_trip_multiplier 0 = use the per-km round-trip rates instead.
+const SETTING_NUMBERS = { toll_per_km: [0, 100], gst_percent: [0, 50], commission_percent: [0, 90], round_trip_multiplier: [0, 5] };
 const ROUTE_NUMBERS = {
   origin_lat: [-90, 90], origin_lng: [-180, 180], dest_lat: [-90, 90], dest_lng: [-180, 180],
   radius_km: [1, 100], one_way_fare: [1, 10000000], round_trip_fare: [1, 10000000]

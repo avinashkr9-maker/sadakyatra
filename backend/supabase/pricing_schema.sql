@@ -77,3 +77,6 @@ update public.bookings set trip_type = 'LOCAL' where service_type = 'LOCAL' and 
 alter table public.vehicle_categories enable row level security;
 alter table public.pricing_settings enable row level security;
 alter table public.fixed_routes enable row level security;
+
+-- Rate-sheet style round trips: one-way fare x multiplier (e.g. 1.75). 0 = use the per-km round-trip rates.
+alter table public.pricing_settings add column if not exists round_trip_multiplier double precision not null default 0;

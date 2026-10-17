@@ -75,7 +75,12 @@ export function quoteFor(pricing, category, { distanceKm: km, tripType, tripDate
 
   let baseFare;
   let billedKm;
-  if (tripType === 'ROUND_TRIP') {
+  const multiplier = pricing.settings.round_trip_multiplier;
+  if (tripType === 'ROUND_TRIP' && multiplier > 0) {
+    // Rate-sheet style: a round trip costs the one-way fare times the multiplier (e.g. 1.75).
+    billedKm = Math.round(km * 2);
+    baseFare = Math.round(Math.max(rate.base_fare + km * rate.per_km, rate.min_fare) * multiplier);
+  } else if (tripType === 'ROUND_TRIP') {
     // Charged on the km driven there and back, but at least the minimum km for each day away.
     billedKm = Math.max(Math.round(km * 2), Math.round(rate.rt_min_km_per_day * days));
     baseFare = Math.round(Math.max(rate.base_fare + billedKm * rate.rt_per_km, rate.min_fare));
