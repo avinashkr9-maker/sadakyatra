@@ -5,7 +5,7 @@
     "version": "0.1.0",
     "sdkVersion": "57.0.0",
     "orientation": "portrait",
-    "icon": "./assets/loveable/icon-512.png",
+    "icon": "./assets/brand/icon.png",
     "androidStatusBar": {
       "barStyle": "light-content",
       "backgroundColor": "#0A0A0A"
@@ -20,8 +20,8 @@
         "VIBRATE"
       ],
       "adaptiveIcon": {
-        "foregroundImage": "./assets/loveable/icon-512.png",
-        "backgroundColor": "#0A0A0A"
+        "foregroundImage": "./assets/brand/adaptive-icon.png",
+        "backgroundColor": "#1A1A1A"
       },
       "config": {
         "googleMaps": {
@@ -51,7 +51,16 @@
           "locationWhenInUsePermission": "SadakYatra uses your location to set the pickup point and, for drivers, to receive nearby bookings and show the route."
         }
       ],
-      "expo-web-browser"
+      "expo-web-browser",
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/brand/splash-icon.png",
+          "imageWidth": 180,
+          "resizeMode": "contain",
+          "backgroundColor": "#0A0A0A"
+        }
+      ]
     ],
     "extra": {
       "eas": {
