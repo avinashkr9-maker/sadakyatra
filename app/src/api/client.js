@@ -212,6 +212,13 @@ export function getBooking(id) {
 export function getBookingTracking(id) {
   return request(`/bookings/${id}/tracking`);
 }
+// Online advance: get the Razorpay payment page, then ask whether it was paid.
+export function payAdvance(id) {
+  return request(`/bookings/${id}/payment`, { method: 'POST', body: '{}' }, 20000);
+}
+export function checkAdvance(id) {
+  return request(`/bookings/${id}/payment/check`, { method: 'POST', body: '{}' }, 20000);
+}
 export function cancelBooking(id, note) {
   return request(`/bookings/${id}/cancel`, { method: 'POST', body: JSON.stringify({ note }) });
 }

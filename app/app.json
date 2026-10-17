@@ -50,7 +50,8 @@
         {
           "locationWhenInUsePermission": "SadakYatra uses your location to set the pickup point and, for drivers, to receive nearby bookings and show the route."
         }
-      ]
+      ],
+      "expo-web-browser"
     ],
     "extra": {
       "eas": {

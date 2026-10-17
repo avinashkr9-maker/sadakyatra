@@ -27,6 +27,7 @@ import {
 import { CHANNELS, alertLocal, hasRemotePush, registerForPush, unregisterPush } from './src/notifications';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as SecureStore from 'expo-secure-store';
+import * as WebBrowser from 'expo-web-browser';
 import {
   getAppConfig,
   getMe,
@@ -41,6 +42,8 @@ import {
   listBookings,
   getBooking,
   getBookingTracking,
+  payAdvance,
+  checkAdvance,
   cancelBooking,
   warmUp,
   isBackendOnline
@@ -117,6 +120,7 @@ const DEFAULT_PIN = { label: 'Muzaffarpur', latitude: 26.1209, longitude: 85.391
 const BOOKING_STATUS = {
   PENDING_APPROVAL: { label: 'Awaiting approval', style: 'statusPending' },
   ON_HOLD: { label: 'Being reviewed', style: 'statusPending' },
+  AWAITING_PAYMENT: { label: 'Pay advance', style: 'statusPending' },
   APPROVED: { label: 'Finding driver', style: 'statusPending' },
   DRIVER_NOT_FOUND: { label: 'Finding driver', style: 'statusPending' },
   REJECTED: { label: 'Not accepted', style: 'statusCancelled' },
@@ -1408,8 +1412,13 @@ function BookScreen({ from, to, pickupLocation, dropLocation, tripType, carCateg
       </Pressable>
       <View style={styles.paymentRow}>
         <Text style={styles.paymentLabel}>Payment</Text>
-        <Text style={styles.paymentValue}>Cash · pay the driver after your trip</Text>
+        <Text style={styles.paymentValue}>
+          {pricing.onlineAdvance && fare
+            ? `${rupees(Math.round(fare.total * pricing.advancePercent / 100))} advance online · ${rupees(fare.total - Math.round(fare.total * pricing.advancePercent / 100))} cash to driver`
+            : 'Cash · pay the driver after your trip'}
+        </Text>
       </View>
+      {pricing.onlineAdvance ? <Text style={styles.noHidden}>You pay the advance after SadakYatra confirms your booking</Text> : null}
       <Text style={styles.noHidden}>SadakYatra confirms your booking, then a driver is assigned</Text>
 
       <LocationPicker
@@ -1447,6 +1456,7 @@ function defaultEventDate() {
 
 // Wedding & baraat cars: browse the catalog, then request one or more cars for the event.
 function WeddingScreen({ onBooked }) {
+  const pricing = usePricing();
   const [vehicles, setVehicles] = useState(null);
   const [loadError, setLoadError] = useState(null);
   const [selected, setSelected] = useState(null);
@@ -1576,7 +1586,7 @@ function WeddingScreen({ onBooked }) {
       </Pressable>
       <View style={styles.paymentRow}>
         <Text style={styles.paymentLabel}>Payment</Text>
-        <Text style={styles.paymentValue}>Cash · pay the driver</Text>
+        <Text style={styles.paymentValue}>{pricing.onlineAdvance ? `${pricing.advancePercent}% advance online after confirmation · rest in cash` : 'Cash · pay the driver'}</Text>
       </View>
       <Text style={styles.noHidden}>SadakYatra confirms your booking, then assigns the car{count > 1 ? 's' : ''}</Text>
       <LocationPicker
@@ -1627,13 +1637,56 @@ function AboutScreen({ lastTrip }) {
   );
 }
 
+// Pay the online advance (SadakYatra's commission) in a secure Razorpay page inside the app.
+function AdvanceCard({ booking, onPaid }) {
+  const [busy, setBusy] = useState(false);
+  const balance = booking.estimated_fare - booking.advance_amount;
+
+  async function pay() {
+    setBusy(true);
+    try {
+      const result = await payAdvance(booking.id);
+      if (!result.paid) {
+        await WebBrowser.openBrowserAsync(result.url, { toolbarColor: '#0A0A0A', controlsColor: '#FFCC00' });
+        // Back from the payment page: Razorpay may need a moment to confirm.
+        let check = await checkAdvance(booking.id);
+        if (!check.paid) {
+          await new Promise((resolve) => setTimeout(resolve, 2500));
+          check = await checkAdvance(booking.id);
+        }
+        if (!check.paid) {
+          Alert.alert('Payment not received yet', 'If you paid, it will show here within a minute. Otherwise tap Pay again.');
+          return;
+        }
+      }
+      Alert.alert('Advance paid', 'Thank you! We are now finding your driver.');
+      onPaid();
+    } catch (error) {
+      Alert.alert('Could not open payment', error.offline ? 'No internet. Please try again.' : error.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <View style={styles.advanceCard}>
+      <Text style={styles.advanceTitle}>Booking confirmed · pay advance</Text>
+      <Text style={styles.advanceText}>Pay {rupees(booking.advance_amount)} online now. The rest, {rupees(balance)}, is paid in cash to the driver.</Text>
+      <Pressable style={styles.advanceButton} onPress={pay} disabled={busy}>
+        <Text style={styles.advanceButtonText}>{busy ? 'Opening…' : `Pay ${rupees(booking.advance_amount)} now`}</Text>
+      </Pressable>
+      <Text style={styles.advanceNote}>UPI, cards and net banking · secured by Razorpay · refunded if the trip is cancelled</Text>
+    </View>
+  );
+}
+
 function BookingsScreen({ phone, bookings, loading, error, selectedBooking, tracking, events, onRefresh, onSelectBooking, onCancel, onBook, onBack }) {
   const pricing = usePricing();
   if (selectedBooking) {
     const status = bookingStatus(selectedBooking);
     let fare = null;
     try { fare = selectedBooking.fare_breakdown ? JSON.parse(selectedBooking.fare_breakdown) : null; } catch { fare = null; }
-    const canCancel = ['PENDING_APPROVAL', 'ON_HOLD', 'APPROVED', 'DRIVER_NOT_FOUND', 'CONFIRMED'].includes(selectedBooking.status);
+    const canCancel = ['PENDING_APPROVAL', 'ON_HOLD', 'AWAITING_PAYMENT', 'APPROVED', 'DRIVER_NOT_FOUND', 'CONFIRMED'].includes(selectedBooking.status);
     return (
       <View style={styles.statusCardOuter}>
         <Pressable style={styles.backLink} onPress={onBack}>
@@ -1664,6 +1717,11 @@ function BookingsScreen({ phone, bookings, loading, error, selectedBooking, trac
           {['PENDING_APPROVAL', 'ON_HOLD'].includes(selectedBooking.status) ? (
             <Text style={styles.emptySub}>SadakYatra is reviewing your booking. You will be notified once it is confirmed.</Text>
           ) : null}
+          {selectedBooking.status === 'AWAITING_PAYMENT' ? <AdvanceCard booking={selectedBooking} onPaid={() => onSelectBooking(selectedBooking.id)} /> : null}
+          {selectedBooking.advance_status === 'PAID' ? (
+            <Text style={styles.advancePaidNote}>Advance {rupees(selectedBooking.advance_amount)} paid online · pay {rupees(selectedBooking.estimated_fare - selectedBooking.advance_amount)} in cash to the driver</Text>
+          ) : null}
+          {selectedBooking.advance_status === 'REFUNDED' ? <Text style={styles.advancePaidNote}>Advance {rupees(selectedBooking.advance_amount)} refunded to you</Text> : null}
           {['APPROVED', 'DRIVER_NOT_FOUND'].includes(selectedBooking.status) ? (
             <Text style={styles.emptySub}>Confirmed by SadakYatra. We are assigning a driver; their name, phone and car number appear here.</Text>
           ) : null}
@@ -2331,6 +2389,13 @@ const styles = StyleSheet.create(largerText({
   stepperText: { color: '#0A0A0A', fontSize: 24, fontWeight: '900' },
   stepperValue: { color: '#FFFFFF', fontSize: 22, fontWeight: '900', minWidth: 28, textAlign: 'center' },
   chipWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 6 },
+  advanceCard: { borderRadius: 16, borderWidth: 1.5, borderColor: '#FFCC00', backgroundColor: 'rgba(255,204,0,0.08)', padding: 14, marginTop: 12 },
+  advanceTitle: { color: '#FFCC00', fontSize: 16, fontWeight: '900' },
+  advanceText: { color: '#FFFFFF', fontSize: 14, lineHeight: 20, marginTop: 6 },
+  advanceButton: { minHeight: 50, borderRadius: 14, backgroundColor: '#FFCC00', alignItems: 'center', justifyContent: 'center', marginTop: 12 },
+  advanceButtonText: { color: '#0A0A0A', fontSize: 16, fontWeight: '900' },
+  advanceNote: { color: '#9A9A9A', fontSize: 11, marginTop: 8, textAlign: 'center' },
+  advancePaidNote: { color: '#4CC157', fontSize: 13, fontWeight: '700', marginTop: 8 },
   statusReason: { color: '#F5A623', fontSize: 13, marginTop: 6 },
   screen: { flex: 1, backgroundColor: colors.bg },
   disabled: { opacity: 0.5 },

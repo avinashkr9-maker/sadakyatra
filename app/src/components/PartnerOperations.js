@@ -460,7 +460,9 @@ export function AdminDashboard({ account }) {
   async function bookingAction(booking, action, body) {
     try {
       const result = await apiRequest(`/admin/bookings/${booking.id}/${action}`, 'POST', body);
-      setMessage(action === 'approve'
+      setMessage(action === 'approve' && result.awaitingPayment
+        ? `${booking.booking_ref} approved · customer asked to pay ₹${result.advance} advance; drivers get it once paid.`
+        : action === 'approve'
         ? `${booking.booking_ref} approved · sent to ${result.driversNotified} online driver${result.driversNotified === 1 ? '' : 's'}.`
         : `${booking.booking_ref}: ${ADMIN_STATUS[result.booking.status] || result.booking.status}.`);
       await load(true);
@@ -637,6 +639,7 @@ const ADMIN_STATUS = {
   ON_HOLD: 'On hold',
   APPROVED: 'Searching for driver',
   DRIVER_NOT_FOUND: 'No driver found',
+  AWAITING_PAYMENT: 'Waiting for advance',
   CONFIRMED: 'Driver assigned',
   ONGOING: 'Trip started',
   COMPLETED: 'Completed',
@@ -645,12 +648,13 @@ const ADMIN_STATUS = {
 };
 const BOOKING_GROUPS = [
   { title: 'Needs your approval', statuses: ['PENDING_APPROVAL', 'ON_HOLD'] },
+  { title: "Waiting for customer's advance", statuses: ['AWAITING_PAYMENT'] },
   { title: 'Searching for driver', statuses: ['APPROVED'] },
   { title: 'No driver found', statuses: ['DRIVER_NOT_FOUND'] },
   { title: 'Active trips', statuses: ['CONFIRMED', 'ONGOING'] }
 ];
 const OVERVIEW = [
-  ['Pending', ['PENDING_APPROVAL', 'ON_HOLD']],
+  ['Pending', ['PENDING_APPROVAL', 'ON_HOLD', 'AWAITING_PAYMENT']],
   ['Searching', ['APPROVED', 'DRIVER_NOT_FOUND']],
   ['Active', ['CONFIRMED', 'ONGOING']],
   ['Completed', ['COMPLETED']],
@@ -679,7 +683,7 @@ function AdminBookingCard({ booking, cabs, onAction }) {
   const [reason, setReason] = useState('');
   const [choosingCab, setChoosingCab] = useState(false);
   const status = booking.status;
-  const open = ['PENDING_APPROVAL', 'ON_HOLD', 'APPROVED', 'DRIVER_NOT_FOUND'].includes(status);
+  const open = ['PENDING_APPROVAL', 'ON_HOLD', 'AWAITING_PAYMENT', 'APPROVED', 'DRIVER_NOT_FOUND'].includes(status);
   // Matching vehicle type first, online cabs before offline ones.
   const cabChoices = [...cabs].sort((a, b) => (b.category === booking.car_category) - (a.category === booking.car_category) || b.is_online - a.is_online);
 
@@ -697,6 +701,11 @@ function AdminBookingCard({ booking, cabs, onAction }) {
       </Pressable>
       {booking.driver_name ? <Text style={styles.itemMeta}>Driver: {booking.driver_name} (+91 {booking.driver_phone}) · {booking.cab_ref} {booking.plate_no}</Text> : null}
       {status === 'APPROVED' ? <Text style={styles.dispatchStatus}>Sent to eligible online drivers{booking.declined_count ? ` · ${booking.declined_count} declined` : ''}. First to accept gets it.</Text> : null}
+      {booking.advance_amount ? (
+        <Text style={booking.advance_status === 'PAID' ? styles.advancePaid : styles.itemMeta}>
+          Advance {rupee(booking.advance_amount)}: {{ PENDING: 'not paid yet', PAID: 'paid online', REFUNDED: 'refunded', REFUND_FAILED: 'REFUND FAILED - refund from Razorpay' }[booking.advance_status] || booking.advance_status}
+        </Text>
+      ) : null}
       {booking.status_reason ? <Text style={styles.itemMeta}>Note: {booking.status_reason}</Text> : null}
 
       {open || status === 'CONFIRMED' ? (
@@ -706,8 +715,11 @@ function AdminBookingCard({ booking, cabs, onAction }) {
         {['PENDING_APPROVAL', 'ON_HOLD', 'DRIVER_NOT_FOUND'].includes(status) ? (
           <ActionButton label={status === 'DRIVER_NOT_FOUND' ? 'Send to drivers again' : 'Approve'} onPress={() => act('approve')} primary />
         ) : null}
+        {['PENDING_APPROVAL', 'ON_HOLD', 'AWAITING_PAYMENT'].includes(status) && booking.advance_status !== 'PAID' ? (
+          <ActionButton label="Approve without advance" onPress={() => act('approve', { skipAdvance: true })} />
+        ) : null}
         {open ? <ActionButton label={choosingCab ? 'Close cab list' : 'Assign cab'} onPress={() => setChoosingCab(!choosingCab)} /> : null}
-        {['PENDING_APPROVAL', 'APPROVED', 'DRIVER_NOT_FOUND'].includes(status) ? <ActionButton label="Hold" onPress={() => act('hold', { reason })} /> : null}
+        {['PENDING_APPROVAL', 'AWAITING_PAYMENT', 'APPROVED', 'DRIVER_NOT_FOUND'].includes(status) ? <ActionButton label="Hold" onPress={() => act('hold', { reason })} /> : null}
         {open ? <ActionButton label="Reject" onPress={() => act('reject', { reason })} /> : null}
         {status === 'CONFIRMED' ? <ActionButton label="Cancel booking" onPress={() => act('cancel', { reason })} /> : null}
       </View>
@@ -939,6 +951,7 @@ const styles = StyleSheet.create(largerText({
   navAddress: { color: palette.text, fontSize: 16, fontWeight: '800', marginTop: 4 },
   navEta: { color: palette.text, fontSize: 22, fontWeight: '900', marginTop: 6 },
   navBottom: { position: 'absolute', bottom: 24, left: 12, right: 12, borderRadius: 16, backgroundColor: palette.elevated, borderWidth: 1, borderColor: palette.border, padding: 12, paddingBottom: 2 },
+  advancePaid: { color: '#4CC157', fontSize: 11, fontWeight: '800', marginTop: 4 },
   collect: { color: palette.primary, fontSize: 14, fontWeight: '900', marginTop: 6 },
   payout: { color: '#4CC157', fontSize: 15, fontWeight: '900', marginTop: 6 },
   adminTabs: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 4, marginBottom: 6 },

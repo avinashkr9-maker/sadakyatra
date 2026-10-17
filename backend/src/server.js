@@ -12,6 +12,7 @@ import {
 } from './auth.js';
 import { CHANNELS, notifyStaff, notifyUsers } from './notify.js';
 import { clearPricingCache, loadPricing, publicPricing, quoteFor, tripDays } from './pricing.js';
+import { createPaymentLink, fetchPaymentLink, razorpayEnabled, refundPayment, validWebhookSignature } from './razorpay.js';
 
 const app = express();
 // Express 4 does not catch rejected promises from async handlers.
@@ -20,7 +21,7 @@ const port = process.env.PORT || 4000;
 const nano = customAlphabet('0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ', 8);
 
 app.use(cors());
-app.use(express.json({ limit: '8mb' }));
+app.use(express.json({ limit: '8mb', verify: (req, _res, buffer) => { if (req.originalUrl.startsWith('/payments/')) req.rawBody = buffer; } }));
 app.use(authenticate);
 // Logins, roles and names only change through these endpoints: forget remembered accounts after any change there.
 const ACCOUNT_CHANGING_PATHS = ['/auth/', '/me', '/admin/', '/partners/'];
@@ -133,7 +134,9 @@ app.get('/health/db', async (_req, res) => {
 
 // Brand, FAQs and current prices for the app.
 const sendConfig = handle(async (_req, res) => {
-  res.json({ ...appConfig, pricing: publicPricing(await loadPricing()) });
+  const pricing = await loadPricing();
+  // advancePercent: SadakYatra's commission, paid online before drivers see the booking (when Razorpay is set up).
+  res.json({ ...appConfig, pricing: { ...publicPricing(pricing), advancePercent: pricing.settings.commission_percent, onlineAdvance: razorpayEnabled() } });
 });
 app.get('/app/config', sendConfig);
 app.get('/config', sendConfig);
@@ -456,6 +459,7 @@ const STATUS_LABELS = {
   PENDING_APPROVAL: 'waiting for approval',
   ON_HOLD: 'on hold',
   REJECTED: 'rejected',
+  AWAITING_PAYMENT: 'waiting for the advance payment',
   APPROVED: 'searching for a driver',
   DRIVER_NOT_FOUND: 'without a driver',
   CONFIRMED: 'confirmed with a driver',
@@ -463,7 +467,7 @@ const STATUS_LABELS = {
   COMPLETED: 'completed',
   CANCELLED: 'cancelled'
 };
-const OPEN_FOR_ADMIN = ['PENDING_APPROVAL', 'ON_HOLD', 'APPROVED', 'DRIVER_NOT_FOUND'];
+const OPEN_FOR_ADMIN = ['PENDING_APPROVAL', 'ON_HOLD', 'AWAITING_PAYMENT', 'APPROVED', 'DRIVER_NOT_FOUND'];
 const CANCELLABLE = [...OPEN_FOR_ADMIN, 'CONFIRMED'];
 const DRIVER_SEARCH_MINUTES = Number(process.env.DRIVER_SEARCH_MINUTES || 15);
 const DISPATCH_RADIUS_KM = Number(process.env.DISPATCH_RADIUS_KM || 80);
@@ -650,6 +654,24 @@ app.get('/bookings', requireLogin, handle(async (req, res) => {
   res.json({ bookings: bookings.map(publicBooking) });
 }));
 
+// A paid advance goes back to the customer when the booking ends without a trip.
+async function refundAdvanceIfPaid(booking) {
+  if (booking.advance_status !== 'PAID' || !booking.razorpay_payment_id) return;
+  try {
+    await refundPayment(booking.razorpay_payment_id, booking.advance_amount);
+    await query("UPDATE bookings SET advance_status = 'REFUNDED' WHERE id = $1", [booking.id]);
+    notifyUsers([booking.customer_id], {
+      title: `Advance refunded · ${booking.booking_ref}`,
+      body: `₹${booking.advance_amount} is on its way back to you (usually 5-7 working days).`,
+      data: { bookingId: booking.id }
+    });
+  } catch (error) {
+    console.error('Refund failed', booking.booking_ref, error.message);
+    await query("UPDATE bookings SET advance_status = 'REFUND_FAILED' WHERE id = $1", [booking.id]);
+    notifyStaff('bookings', { title: `Refund failed · ${booking.booking_ref}`, body: `Refund ₹${booking.advance_amount} from the Razorpay dashboard.`, data: { bookingId: booking.id } });
+  }
+}
+
 app.post('/bookings/:id/cancel', requireLogin, handle(async (req, res) => {
   const id = Number(req.params.id);
   const owned = await getBooking(id);
@@ -664,7 +686,8 @@ app.post('/bookings/:id/cancel', requireLogin, handle(async (req, res) => {
     });
   }
   notifyStaff('bookings', { title: `Customer cancelled · ${booking.booking_ref}`, body: tripLine(booking), data: { bookingId: id } });
-  res.json({ booking: publicBooking(booking) });
+  await refundAdvanceIfPaid(booking);
+  res.json({ booking: publicBooking(await getBooking(id)) });
 }));
 
 // ---- Admin: review bookings ----------------------------------------------
@@ -698,12 +721,8 @@ app.get('/admin/overview', requireStaff('bookings'), handle(async (_req, res) =>
   res.json({ counts, total: Object.values(counts).reduce((sum, n) => sum + n, 0), onlineDrivers: online.n });
 }));
 
-app.post('/admin/bookings/:id/approve', requireStaff('bookings'), handle(async (req, res) => {
-  const { booking } = await transitionBooking(Number(req.params.id), ['PENDING_APPROVAL', 'ON_HOLD', 'DRIVER_NOT_FOUND'], 'APPROVED', {
-    actorId: req.account?.id ?? null,
-    note: 'Approved by SadakYatra',
-    fields: { approved_by_user_id: req.account?.id ?? null, approved_at: new Date(), status_reason: null }
-  });
+// Offer an approved booking to every eligible online driver; returns how many were told.
+async function sendToDrivers(booking) {
   const cabs = await eligibleCabs(booking);
   notifyUsers(cabs.map((cab) => cab.user_id), {
     title: 'New booking available',
@@ -711,15 +730,128 @@ app.post('/admin/bookings/:id/approve', requireStaff('bookings'), handle(async (
     channel: CHANNELS.offers,
     data: { bookingId: booking.id }
   });
+  return cabs.length;
+}
+
+const advanceFor = (booking) => Math.round((booking.estimated_fare || 0) * (booking.commission_percent ?? 15) / 100);
+
+app.post('/admin/bookings/:id/approve', requireStaff('bookings'), handle(async (req, res) => {
+  const id = Number(req.params.id);
+  const current = await getBooking(id);
+  if (!current) return res.status(404).json({ error: 'Booking not found' });
+  const advance = advanceFor(current);
+  const askAdvance = razorpayEnabled() && req.body.skipAdvance !== true && current.advance_status !== 'PAID' && advance > 0;
+  const { booking } = await transitionBooking(id, ['PENDING_APPROVAL', 'ON_HOLD', 'DRIVER_NOT_FOUND', 'AWAITING_PAYMENT'], askAdvance ? 'AWAITING_PAYMENT' : 'APPROVED', {
+    actorId: req.account?.id ?? null,
+    note: askAdvance ? `Approved by SadakYatra · waiting for ₹${advance} advance` : 'Approved by SadakYatra',
+    fields: {
+      approved_by_user_id: req.account?.id ?? null, approved_at: new Date(), status_reason: null,
+      advance_amount: current.advance_status === 'PAID' ? current.advance_amount : askAdvance ? advance : null,
+      advance_status: current.advance_status === 'PAID' ? 'PAID' : askAdvance ? 'PENDING' : 'NOT_REQUIRED'
+    }
+  });
+  if (askAdvance) {
+    notifyUsers([booking.customer_id], {
+      title: `Booking confirmed · pay ₹${advance} advance`,
+      body: `Pay the advance in the app and we will assign your driver. The rest (₹${booking.estimated_fare - advance}) is paid in cash to the driver.`,
+      data: { bookingId: booking.id }
+    });
+    return res.json({ booking: publicBooking(booking), driversNotified: 0, awaitingPayment: true, advance });
+  }
+  const driversNotified = await sendToDrivers(booking);
   notifyUsers([booking.customer_id], {
     title: `Booking approved · ${booking.booking_ref}`, body: 'We are finding a driver for you.', data: { bookingId: booking.id }
   });
-  res.json({ booking: publicBooking(booking), driversNotified: cabs.length });
+  res.json({ booking: publicBooking(booking), driversNotified });
+}));
+
+// ---- Customer: online advance (Razorpay payment link) --------------------
+// Advance received: the booking goes to drivers. Safe to call twice (webhook + app check).
+async function markAdvancePaid(bookingId, paymentId) {
+  try {
+    const { booking } = await transitionBooking(bookingId, ['AWAITING_PAYMENT'], 'APPROVED', {
+      note: 'Advance paid online',
+      fields: { advance_status: 'PAID', razorpay_payment_id: paymentId, advance_paid_at: new Date(), approved_at: new Date() }
+    });
+    const driversNotified = await sendToDrivers(booking);
+    notifyUsers([booking.customer_id], {
+      title: `Advance received · ${booking.booking_ref}`, body: `₹${booking.advance_amount} paid. We are finding your driver.`, data: { bookingId }
+    });
+    notifyStaff('bookings', {
+      title: `Advance paid · ${booking.booking_ref}`, body: `₹${booking.advance_amount} received · sent to ${driversNotified} drivers`, data: { bookingId }
+    });
+    return booking;
+  } catch (error) {
+    if (error.code !== 'WRONG_STATUS') throw error;
+    // Paid after the booking was cancelled or rejected: record it and give the money back.
+    const booking = await getBooking(bookingId);
+    if (booking && ['CANCELLED', 'REJECTED'].includes(booking.status) && booking.advance_status === 'PENDING') {
+      await query("UPDATE bookings SET advance_status = 'PAID', razorpay_payment_id = $1, advance_paid_at = now() WHERE id = $2", [paymentId, bookingId]);
+      await refundAdvanceIfPaid(await getBooking(bookingId));
+    }
+    return booking;
+  }
+}
+
+async function ownBookingAwaitingAdvance(req, res) {
+  const booking = await getBooking(Number(req.params.id));
+  if (!booking || booking.customer_id !== req.account.id) { res.status(404).json({ error: 'Booking not found' }); return null; }
+  return booking;
+}
+
+app.post('/bookings/:id/payment', requireLogin, handle(async (req, res) => {
+  const booking = await ownBookingAwaitingAdvance(req, res);
+  if (!booking) return;
+  if (booking.status !== 'AWAITING_PAYMENT' || booking.advance_status !== 'PENDING') {
+    return res.status(409).json({ error: 'No advance is due for this booking' });
+  }
+  if (!razorpayEnabled()) return res.status(503).json({ error: 'Online payment is not available right now. Please call SadakYatra.' });
+  // Reuse a still-open link so the customer never pays twice.
+  if (booking.razorpay_link_id) {
+    const existing = await fetchPaymentLink(booking.razorpay_link_id).catch(() => null);
+    if (existing?.status === 'paid') {
+      await markAdvancePaid(booking.id, existing.payments?.[0]?.payment_id || null);
+      return res.json({ paid: true, booking: publicBooking(await getBooking(booking.id)) });
+    }
+    if (existing?.status === 'created' || existing?.status === 'partially_paid') {
+      return res.json({ url: existing.short_url, amount: booking.advance_amount });
+    }
+  }
+  const link = await createPaymentLink({
+    amount: booking.advance_amount, bookingRef: booking.booking_ref, bookingId: booking.id,
+    customerName: req.account.fullName, customerPhone: req.account.phone
+  });
+  await query('UPDATE bookings SET razorpay_link_id = $1, razorpay_link_url = $2 WHERE id = $3', [link.id, link.short_url, booking.id]);
+  res.json({ url: link.short_url, amount: booking.advance_amount });
+}));
+
+// The app asks after the payment page closes, in case the webhook hasn't arrived yet.
+app.post('/bookings/:id/payment/check', requireLogin, handle(async (req, res) => {
+  const booking = await ownBookingAwaitingAdvance(req, res);
+  if (!booking) return;
+  if (booking.status === 'AWAITING_PAYMENT' && booking.razorpay_link_id && razorpayEnabled()) {
+    const link = await fetchPaymentLink(booking.razorpay_link_id).catch(() => null);
+    if (link?.status === 'paid') await markAdvancePaid(booking.id, link.payments?.[0]?.payment_id || null);
+  }
+  const latest = await getBooking(booking.id);
+  res.json({ paid: latest.advance_status === 'PAID', booking: publicBooking(latest) });
+}));
+
+// Razorpay calls this when a payment link is paid (set the URL and secret in the Razorpay dashboard).
+app.post('/payments/razorpay/webhook', handle(async (req, res) => {
+  if (!validWebhookSignature(req.rawBody, req.get('x-razorpay-signature'))) return res.status(400).json({ error: 'Invalid signature' });
+  if (req.body.event === 'payment_link.paid') {
+    const linkId = req.body.payload?.payment_link?.entity?.id;
+    const paymentId = req.body.payload?.payment?.entity?.id || null;
+    const booking = linkId ? await one('SELECT id FROM bookings WHERE razorpay_link_id = $1', [linkId]) : null;
+    if (booking) await markAdvancePaid(booking.id, paymentId);
+  }
+  res.json({ ok: true });
 }));
 
 app.post('/admin/bookings/:id/hold', requireStaff('bookings'), handle(async (req, res) => {
   const reason = String(req.body.reason || '').trim().slice(0, 300) || null;
-  const { booking } = await transitionBooking(Number(req.params.id), ['PENDING_APPROVAL', 'APPROVED', 'DRIVER_NOT_FOUND'], 'ON_HOLD', {
+  const { booking } = await transitionBooking(Number(req.params.id), ['PENDING_APPROVAL', 'AWAITING_PAYMENT', 'APPROVED', 'DRIVER_NOT_FOUND'], 'ON_HOLD', {
     actorId: req.account?.id ?? null, note: reason || 'Put on hold', fields: { status_reason: reason }
   });
   res.json({ booking: publicBooking(booking) });
@@ -735,7 +867,8 @@ app.post('/admin/bookings/:id/reject', requireStaff('bookings'), handle(async (r
     body: reason || 'Sorry, we cannot serve this trip. Please call us for help.',
     data: { bookingId: booking.id }
   });
-  res.json({ booking: publicBooking(booking) });
+  await refundAdvanceIfPaid(booking);
+  res.json({ booking: publicBooking(await getBooking(booking.id)) });
 }));
 
 app.post('/admin/bookings/:id/cancel', requireStaff('bookings'), handle(async (req, res) => {
@@ -749,7 +882,8 @@ app.post('/admin/bookings/:id/cancel', requireStaff('bookings'), handle(async (r
       title: `Booking cancelled · ${booking.booking_ref}`, body: tripLine(booking), channel: CHANNELS.offers
     });
   }
-  res.json({ booking: publicBooking(booking) });
+  await refundAdvanceIfPaid(booking);
+  res.json({ booking: publicBooking(await getBooking(booking.id)) });
 }));
 
 // ---- Admin: pricing ------------------------------------------------------
@@ -1365,7 +1499,7 @@ app.get('/driver/me', requireDriver, handle(async (req, res) => {
 // Drivers see the trip, not who booked it, until they accept.
 const offerView = ({ customer_id: _c, tracking_token_hash: _t, customer_note: _n, admin_note: _a, status_reason: _r, ...offer }) => driverView(offer);
 // Drivers see what they earn, not what the customer pays.
-const driverView = ({ estimated_fare: _f, fare_breakdown: _b, commission_percent: _p, tracking_token_hash: _t, ...trip }) => trip;
+const driverView = ({ estimated_fare: _f, fare_breakdown: _b, commission_percent: _p, tracking_token_hash: _t, razorpay_link_id: _l, razorpay_link_url: _u, razorpay_payment_id: _i, ...trip }) => trip;
 
 // The driver's own trips, plus approved bookings they can still accept.
 app.get('/driver/bookings', requireDriver, handle(async (req, res) => {
@@ -1397,7 +1531,13 @@ app.get('/driver/bookings', requireDriver, handle(async (req, res) => {
       .map(offerView);
   }
   // Customers pay cash to the driver, so an accepted trip shows how much to collect.
-  res.json({ bookings: bookings.map((trip) => ({ ...driverView(trip), cash_to_collect: trip.estimated_fare })), offers });
+  res.json({
+    bookings: bookings.map((trip) => ({
+      ...driverView(trip),
+      cash_to_collect: trip.estimated_fare - (trip.advance_status === 'PAID' ? trip.advance_amount || 0 : 0)
+    })),
+    offers
+  });
 }));
 
 app.patch('/driver/bookings/:id/response', requireDriver, handle(async (req, res) => {
